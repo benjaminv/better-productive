@@ -28,6 +28,7 @@ export default {
       // GET /browse/PRIM-X → Redirect to Productive.io task (Jira-style)
       // GET /api/search    → JSON search results
       // GET /api/prefixes  → List all project prefixes
+      // GET /api/filters   → List all available filters
       // POST /update       → Manual database refresh
 
       // Handle /browse/PRIM-242 style URLs
@@ -199,89 +200,117 @@ async function updateTaskDatabase(env) {
     'X-Organization-Id': orgId
   };
 
-  let page = 1;
-  let allTasks = [];
+  // Load existing tasks to preserve deleted ones
+  const existingTasksJson = await env.TASKS_KV.get('all_tasks');
+  const existingTasks = existingTasksJson ? JSON.parse(existingTasksJson) : [];
+  const existingTasksMap = new Map(existingTasks.map(t => [t.id, t]));
+
+  let taskMap = new Map();  // Use map to dedupe by task ID
   let allProjects = new Map();
   let allStatuses = new Set();
-  let allAssignees = new Map();  // id -> name
-  let hasMore = true;
+  let allAssignees = new Map();
 
-  // Fetch tasks with pagination - use subscriber_id to get ALL tasks user is subscribed to
-  // This includes: assigned tasks, created tasks, tasks user commented on, etc.
-  while (hasMore && page <= 50) {
-    let url = `${baseUrl}?page[number]=${page}&page[size]=200` +
-      `&include=assignee,project,workflow_status`;
+  // Helper to fetch paginated tasks with a specific filter
+  async function fetchTasksWithFilter(filterParam, filterValue) {
+    let page = 1;
+    let hasMore = true;
     
-    // Use subscriber_id instead of assignee_id to get historic/related tasks
-    if (personId) {
-      url += `&filter[subscriber_id]=${personId}`;
-    }
+    while (hasMore && page <= 25) {  // 25 pages per filter type = 50 total max
+      const url = `${baseUrl}?page[number]=${page}&page[size]=200` +
+        `&include=assignee,project,workflow_status` +
+        `&filter[${filterParam}]=${filterValue}` +
+        `&sort=-id`;             // Fetch newest tasks first
 
-    console.log(`Fetching page ${page}...`);
-    const response = await fetch(url, { headers });
+      console.log(`Fetching ${filterParam}=${filterValue} page ${page}...`);
+      const response = await fetch(url, { headers });
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`API error ${response.status}: ${errorText}`);
-    }
-
-    const data = await response.json();
-
-    // Build lookup maps from included data
-    const peopleMap = {};
-    const projectMap = {};
-    const statusMap = {};
-
-    (data.included || []).forEach(item => {
-      if (item.type === 'people') {
-        const name = item.attributes.name || item.attributes.email || 'Unknown';
-        peopleMap[item.id] = name;
-        allAssignees.set(item.id, name);
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`API error ${response.status}: ${errorText}`);
       }
-      if (item.type === 'projects') {
-        projectMap[item.id] = item.attributes.name;
-        allProjects.set(item.id, { id: item.id, name: item.attributes.name });
-      }
-      if (item.type === 'workflow_statuses') {
-        statusMap[item.id] = item.attributes.name;
-      }
-    });
 
-    // Process tasks
-    for (const task of data.data) {
-      const assigneeId = task.relationships?.assignee?.data?.id;
-      const projectId = task.relationships?.project?.data?.id;
-      const statusId = task.relationships?.workflow_status?.data?.id;
-      const status = statusMap[statusId] || task.attributes.workflow_status_name || 'Unknown';
-      
-      allStatuses.add(status);
+      const data = await response.json();
 
-      allTasks.push({
-        id: task.id,
-        ticketNumber: task.attributes.number,
-        title: task.attributes.title,
-        projectId: projectId,
-        project: projectMap[projectId] || 'No Project',
-        status: status,
-        assigneeId: assigneeId || null,
-        assignee: peopleMap[assigneeId] || 'Unassigned',
-        dueDate: task.attributes.due_date,
-        createdAt: task.attributes.created_at,
-        updatedAt: task.attributes.updated_at,
-        url: `https://app.productive.io/${orgId}-${orgSlug}/tasks/task/${task.id}`
+      // Build lookup maps from included data
+      const peopleMap = {};
+      const projectMap = {};
+      const statusMap = {};
+
+      (data.included || []).forEach(item => {
+        if (item.type === 'people') {
+          const name = item.attributes.name || item.attributes.email || 'Unknown';
+          peopleMap[item.id] = name;
+          allAssignees.set(item.id, name);
+        }
+        if (item.type === 'projects') {
+          projectMap[item.id] = item.attributes.name;
+          allProjects.set(item.id, { id: item.id, name: item.attributes.name });
+        }
+        if (item.type === 'workflow_statuses') {
+          statusMap[item.id] = item.attributes.name;
+        }
       });
-    }
 
-    hasMore = !!data.links?.next;
-    page++;
+      // Process tasks
+      for (const task of data.data) {
+        if (taskMap.has(task.id)) continue;  // Skip duplicates
+
+        const assigneeId = task.relationships?.assignee?.data?.id;
+        const projectId = task.relationships?.project?.data?.id;
+        const statusId = task.relationships?.workflow_status?.data?.id;
+        const status = statusMap[statusId] || task.attributes.workflow_status_name || 'Unknown';
+        
+        allStatuses.add(status);
+
+        taskMap.set(task.id, {
+          id: task.id,
+          ticketNumber: task.attributes.number,
+          title: task.attributes.title,
+          projectId: projectId,
+          project: projectMap[projectId] || 'No Project',
+          status: status,
+          assigneeId: assigneeId || null,
+          assignee: peopleMap[assigneeId] || 'Unassigned',
+          dueDate: task.attributes.due_date,
+          createdAt: task.attributes.created_at,
+          updatedAt: task.attributes.updated_at,
+          url: `https://app.productive.io/${orgId}-${orgSlug}/tasks/task/${task.id}`,
+          _deleted: false
+        });
+      }
+
+      hasMore = !!data.links?.next;
+      page++;
+    }
   }
+
+  // Fetch BOTH subscribed AND assigned tasks
+  if (personId) {
+    await fetchTasksWithFilter('subscriber_id', personId);
+    await fetchTasksWithFilter('assignee_id', personId);
+  }
+
+  // Preserve tasks from previous sync that are no longer in API (mark as deleted)
+  for (const [taskId, existingTask] of existingTasksMap) {
+    if (!taskMap.has(taskId)) {
+      // Task was in DB but not in API - mark as unknown but keep it
+      taskMap.set(taskId, {
+        ...existingTask,
+        status: existingTask._deleted ? existingTask.status : 'Unknown',
+        _deleted: true
+      });
+      allStatuses.add('Unknown');
+    }
+  }
+
+  const allTasks = [...taskMap.values()].sort((a, b) => b.id - a.id);
 
   // Generate prefixes for all projects
   const { prefixMap, prefixIndex } = generateAllPrefixes([...allProjects.values()]);
 
   // Add ticketKey and projectPrefix to each task
   for (const task of allTasks) {
-    const prefix = prefixMap[task.projectId] || 'UNKN';
+    const prefix = prefixMap[task.projectId] || task.projectPrefix || 'UNKN';
     task.projectPrefix = prefix;
     task.ticketKey = `${prefix}-${task.ticketNumber}`;
   }
@@ -292,6 +321,10 @@ async function updateTaskDatabase(env) {
   await env.TASKS_KV.put('prefix_index', JSON.stringify(prefixIndex));
   await env.TASKS_KV.put('last_updated', new Date().toISOString());
   await env.TASKS_KV.put('task_count', allTasks.length.toString());
+  
+  // Count assigned tasks for stats
+  const assignedCount = allTasks.filter(t => t.assigneeId === personId && !t._deleted).length;
+  await env.TASKS_KV.put('assigned_count', assignedCount.toString());
   
   // Store filter options for the UI
   await env.TASKS_KV.put('filter_statuses', JSON.stringify([...allStatuses].sort()));
@@ -310,8 +343,14 @@ async function updateTaskDatabase(env) {
   // Store current user's person ID for "assigned to me" filter
   await env.TASKS_KV.put('current_person_id', personId);
 
+  const activeCount = allTasks.filter(t => !t._deleted).length;
+  const deletedCount = allTasks.filter(t => t._deleted).length;
+
   return {
     taskCount: allTasks.length,
+    assignedCount,
+    activeCount,
+    deletedCount,
     projectCount: allProjects.size,
     prefixes: prefixMap
   };
@@ -344,8 +383,8 @@ function parseSearchQuery(query) {
 
 function searchTasks(tasks, prefixIndex, query) {
   if (!query || query.trim() === '') {
-    // Return most recent tasks
-    return tasks.slice(0, 50);
+    // Return most recent tasks (sorted by ID desc)
+    return tasks.sort((a, b) => b.id - a.id);
   }
 
   const parsed = parseSearchQuery(query);
@@ -377,7 +416,7 @@ function searchTasks(tasks, prefixIndex, query) {
     task.status.toLowerCase().includes(q) ||
     task.assignee.toLowerCase().includes(q) ||
     task.project.toLowerCase().includes(q)
-  ).slice(0, 50);
+  ).sort((a, b) => b.id - a.id);
 }
 
 // =============================================================================
@@ -522,14 +561,20 @@ async function handleManualUpdate(request, env) {
 // =============================================================================
 
 async function renderSearchPage(env) {
-  const [lastUpdated, taskCount] = await Promise.all([
+  const [lastUpdated, taskCount, assignedCount] = await Promise.all([
     env.TASKS_KV.get('last_updated'),
-    env.TASKS_KV.get('task_count')
+    env.TASKS_KV.get('task_count'),
+    env.TASKS_KV.get('assigned_count')
   ]);
 
   const lastUpdatedDisplay = lastUpdated
     ? new Date(lastUpdated).toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })
     : 'Never';
+    
+  // Format stats: "627 tasks (82 assigned, 627 subscribed)" - wait, we only have total and assigned
+  // Total includes both subscribed and assigned.
+  // Let's show: "627 tasks (5 assigned) • Synced: ..."
+  const statsText = `${taskCount || 0} tasks (${assignedCount || 0} assigned)`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -538,7 +583,7 @@ async function renderSearchPage(env) {
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Productive Task Search</title>
   <style>
-    :root {
+    :root, [data-theme="dark"] {
       --bg-primary: #0f0f0f;
       --bg-secondary: #1a1a1a;
       --bg-card: #242424;
@@ -550,6 +595,20 @@ async function renderSearchPage(env) {
       --success: #22c55e;
       --warning: #f59e0b;
       --error: #ef4444;
+    }
+
+    [data-theme="light"] {
+      --bg-primary: #f8fafc;
+      --bg-secondary: #ffffff;
+      --bg-card: #ffffff;
+      --border: #e2e8f0;
+      --text-primary: #1e293b;
+      --text-secondary: #64748b;
+      --accent: #4f46e5;
+      --accent-hover: #6366f1;
+      --success: #16a34a;
+      --warning: #d97706;
+      --error: #dc2626;
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -650,6 +709,7 @@ async function renderSearchPage(env) {
       border-radius: 8px;
       cursor: pointer;
       transition: all 0.2s;
+      background: transparent;
     }
 
     .btn-primary { background: var(--accent); color: white; }
@@ -767,8 +827,11 @@ async function renderSearchPage(env) {
 <body>
   <div class="container">
     <header>
-      <h1>🔍 Productive Task Search</h1>
-      <p class="stats">\${taskCount || 0} tasks • Synced: \${lastUpdatedDisplay}</p>
+      <div style="display: flex; justify-content: center; align-items: center; gap: 0.75rem;">
+        <h1>Better Productive.io</h1>
+        <button id="themeToggle" class="btn" style="padding: 0.375rem 0.5rem; font-size: 1rem;" title="Toggle theme">🌙</button>
+      </div>
+      <p class="stats">${statsText} • Synced: ${lastUpdatedDisplay}</p>
     </header>
 
     <div class="search-box">
@@ -822,6 +885,20 @@ async function renderSearchPage(env) {
   </div>
 
   <script>
+    // Theme toggle
+    const themeToggle = document.getElementById('themeToggle');
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    themeToggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
+    
+    themeToggle.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      themeToggle.textContent = next === 'dark' ? '🌙' : '☀️';
+    });
+
     const searchInput = document.getElementById('searchInput');
     const resultsDiv = document.getElementById('results');
     const resultCountDiv = document.getElementById('resultCount');
@@ -831,8 +908,13 @@ async function renderSearchPage(env) {
     const filterMeOnly = document.getElementById('filterMeOnly');
     
     let allTasks = [];
+    let filteredTasks = [];
     let currentPersonId = null;
     let debounceTimer;
+    
+    // Pagination
+    let currentPage = 1;
+    const pageSize = 50;
 
     // Load filters and initial data
     loadFilters();
@@ -844,6 +926,11 @@ async function renderSearchPage(env) {
         e.preventDefault();
         searchInput.focus();
         searchInput.select();
+      }
+      // Left/Right arrow for pagination
+      if (document.activeElement !== searchInput) {
+        if (e.key === 'ArrowLeft') changePage(-1);
+        if (e.key === 'ArrowRight') changePage(1);
       }
     });
 
@@ -860,34 +947,43 @@ async function renderSearchPage(env) {
     async function loadFilters() {
       try {
         const res = await fetch('/api/filters');
+        if (!res.ok) throw new Error('Failed to load filters');
         const data = await res.json();
         
-        // Store current person ID for "assigned to me" filter
+        // Populate Projects
+        data.projects.forEach(p => {
+          const option = document.createElement('option');
+          option.value = p.prefix;
+          option.textContent = p.name + ' (' + p.prefix + ')'; // Format: Project Name (PREFIX)
+          filterProject.appendChild(option);
+        });
+        
+        // Populate Statuses
+        data.statuses.forEach(s => {
+          const option = document.createElement('option');
+          option.value = s;
+          option.textContent = s;
+          filterStatus.appendChild(option);
+        });
+        
+        // Store current person ID
         currentPersonId = data.currentPersonId;
         
-        // Populate project filter with "Project Name (PREFIX)" format
-        data.projects.forEach(p => {
-          const label = p.name + ' (' + p.prefix + ')';
-          filterProject.innerHTML += '<option value="' + p.prefix + '">' + escapeHtml(label) + '</option>';
-        });
-        
-        // Populate status filter
-        data.statuses.forEach(s => {
-          filterStatus.innerHTML += '<option value="' + s + '">' + s + '</option>';
-        });
-      } catch (e) {
-        console.error('Failed to load filters:', e);
+      } catch (err) {
+        console.error('Error loading filters:', err);
       }
     }
 
     async function loadTasks() {
       try {
         const res = await fetch('/api/search?q=');
+        if (!res.ok) throw new Error('Failed to load tasks');
         const data = await res.json();
-        allTasks = data.tasks || [];
+        allTasks = data.tasks;
+        filteredTasks = allTasks;
         applyFilters();
-      } catch (e) {
-        resultsDiv.innerHTML = '<div class="empty">❌ Failed to load tasks</div>';
+      } catch (err) {
+        resultsDiv.innerHTML = '<div class="error">Failed to load tasks</div>';
       }
     }
 
@@ -898,16 +994,15 @@ async function renderSearchPage(env) {
       const due = filterDue.value;
       const meOnly = filterMeOnly.checked;
 
+      // Date calculations for filters
       const now = new Date();
-      const today = now.toISOString().split('T')[0];
-      const weekEnd = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-      const yearEnd = now.getFullYear() + '-12-31';
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const tomorrow = today + 86400000;
+      const nextWeek = today + (7 * 86400000);
+      const nextMonth = today + (30 * 86400000);
+      const nextYear = today + (365 * 86400000);
 
-      let filtered = allTasks.filter(task => {
-        // "Assigned to me" filter
-        if (meOnly && currentPersonId && task.assigneeId !== currentPersonId) return false;
-        
+      filteredTasks = allTasks.filter(task => {
         // Text search
         if (query) {
           const searchText = (task.ticketKey + ' ' + task.title + ' ' + task.status + ' ' + task.assignee + ' ' + task.project).toLowerCase();
@@ -920,27 +1015,63 @@ async function renderSearchPage(env) {
         // Status filter
         if (status && task.status !== status) return false;
         
+        // Assigned to me filter
+        if (meOnly && task.assigneeId !== currentPersonId) return false;
+
         // Due date filter
         if (due) {
-          const dueDate = task.dueDate;
-          if (due === 'none' && dueDate) return false;
-          if (due === 'overdue' && (!dueDate || dueDate >= today)) return false;
-          if (due === 'today' && dueDate !== today) return false;
-          if (due === 'week' && (!dueDate || dueDate < today || dueDate > weekEnd)) return false;
-          if (due === 'month' && (!dueDate || dueDate < today || dueDate > monthEnd)) return false;
-          if (due === 'year' && (!dueDate || dueDate < today || dueDate > yearEnd)) return false;
+          if (due === 'none') return !task.dueDate;
+          if (!task.dueDate) return false;
+          
+          const dueDate = new Date(task.dueDate).getTime();
+          
+          if (due === 'overdue') return dueDate < today;
+          if (due === 'today') return dueDate >= today && dueDate < tomorrow;
+          if (due === 'week') return dueDate >= today && dueDate < nextWeek;
+          if (due === 'month') return dueDate >= today && dueDate < nextMonth;
+          if (due === 'year') return dueDate >= today && dueDate < nextYear;
         }
-        
+
         return true;
       });
-
-      resultCountDiv.textContent = 'Showing ' + filtered.length + ' of ' + allTasks.length + ' tasks';
       
-      if (filtered.length === 0) {
-        resultsDiv.innerHTML = '<div class="empty">No tasks match your filters</div>';
-      } else {
-        resultsDiv.innerHTML = filtered.slice(0, 100).map(renderTask).join('');
+      currentPage = 1;
+      renderTasks();
+    }
+    
+    function changePage(delta) {
+      const maxPage = Math.ceil(filteredTasks.length / pageSize) || 1;
+      const newPage = currentPage + delta;
+      if (newPage >= 1 && newPage <= maxPage) {
+        currentPage = newPage;
+        renderTasks();
+        // Scroll to top of results
+        resultsDiv.scrollTop = 0;
       }
+    }
+
+    function renderTasks() {
+      if (filteredTasks.length === 0) {
+        resultsDiv.innerHTML = '<div class="empty">No tasks found</div>';
+        resultCountDiv.textContent = '0 results';
+        return;
+      }
+      
+      const startIndex = (currentPage - 1) * pageSize;
+      const EndIndex = Math.min(startIndex + pageSize, filteredTasks.length);
+      const pageTasks = filteredTasks.slice(startIndex, EndIndex);
+      
+      // Pagination controls
+      const maxPage = Math.ceil(filteredTasks.length / pageSize);
+      const paginationHtml = maxPage > 1 ? 
+        '<div style="display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">' +
+          '<button class="btn btn-secondary" onclick="changePage(-1)" ' + (currentPage === 1 ? 'disabled' : '') + ' style="padding: 0.25rem 0.75rem;">Previous</button>' +
+          '<span style="font-size: 0.9rem; color: var(--text-secondary);">Page ' + currentPage + ' of ' + maxPage + '</span>' +
+          '<button class="btn btn-secondary" onclick="changePage(1)" ' + (currentPage === maxPage ? 'disabled' : '') + ' style="padding: 0.25rem 0.75rem;">Next</button>' +
+        '</div>' : '';
+
+      resultsDiv.innerHTML = pageTasks.map(renderTask).join('') + paginationHtml;
+      resultCountDiv.textContent = filteredTasks.length + ' results' + (filteredTasks.length > pageSize ? ' (showing ' + (startIndex + 1) + '-' + EndIndex + ')' : '');
     }
 
     function clearFilters() {

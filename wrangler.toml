@@ -15,7 +15,7 @@ crons = ["0 * * * *"]
 [vars]
 PRODUCTIVE_ORG_ID = "1476"
 PRODUCTIVE_ORG_SLUG = "dotcollective"
-PRODUCTIVE_PERSON_ID = "992100"  # Ben Hu - filter tasks to only your assigned ones
+PRODUCTIVE_PERSON_ID = "992100"  # Optional - auto-detected from API if not set
 
 # Secrets (use: wrangler secret put PRODUCTIVE_API_TOKEN)
 PRODUCTIVE_API_TOKEN = "085c53ec-d9d8-4136-919c-db587c246fcf"

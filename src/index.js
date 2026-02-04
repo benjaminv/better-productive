@@ -1095,10 +1095,10 @@ async function renderSearchPage(env) {
               <a href="/browse/\${task.ticketKey}" title="Open in Productive">\${task.ticketKey}</a>
             </span>
             <div class="task-title">
-              <a href="\${task.url}" target="_blank">\${escapeHtml(task.title)}</a>
+              <a href="\${task.url}" target="_blank">#\${task.ticketNumber} \${escapeHtml(task.title)}</a>
             </div>
             <div class="task-actions">
-              <button class="copy-btn" onclick="copyMarkdown('\${task.ticketKey}', '\${escapeJs(task.title)}', '\${task.url}', this)">📋</button>
+              <button class="copy-btn" onclick="copyMarkdown('\${task.ticketNumber}', '\${escapeJs(task.title)}', '\${task.url}', this)">📋</button>
             </div>
           </div>
           <div class="task-meta">
@@ -1127,8 +1127,8 @@ async function renderSearchPage(env) {
       return 'status-todo';
     }
 
-    function copyMarkdown(ticketKey, title, url, btn) {
-      const markdown = '[' + ticketKey + ' ' + title + '](' + url + ')';
+    function copyMarkdown(number, title, url, btn) {
+      const markdown = '[#' + number + ' ' + title + '](' + url + ')';
       navigator.clipboard.writeText(markdown).then(() => {
         btn.textContent = '✓';
         btn.classList.add('copied');

@@ -7,9 +7,12 @@ compatibility_date = "2024-01-01"
 binding = "TASKS_KV"
 id = "41e90a11648d4124a4ceeb039aece31e"
 
-# Cron trigger - runs every hour
+# Cron triggers - runs every hour from 7am to 7pm AEDT, Mon-Fri
 [triggers]
-crons = ["0 * * * *"]
+crons = [
+  "0 20-23 * * SUN-THU", # Covers 7:00 AM – 10:00 AM AEDT (Mon-Fri)
+  "0 0-8 * * MON-FRI"    # Covers 11:00 AM – 7:00 PM AEDT (Mon-Fri)
+]
 
 # Environment variables
 [vars]

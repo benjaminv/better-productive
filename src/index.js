@@ -722,6 +722,14 @@ async function renderSearchPage(env) {
     }
     .btn-secondary:hover { background: var(--bg-card); }
 
+    .btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+    .btn:disabled:hover {
+      background: var(--accent);
+    }
+
     .btn-clear {
       background: transparent;
       color: var(--text-secondary);
@@ -874,8 +882,8 @@ async function renderSearchPage(env) {
     </div>
 
     <div class="actions">
-      <button class="btn btn-primary" onclick="updateNow()">🔄 Sync</button>
-      <button class="btn btn-secondary" onclick="showPrefixes()">📋 Prefixes</button>
+      <button class="btn btn-secondary" onclick="updateNow()">🔄 Sync</button>
+      <button class="btn btn-primary" id="copyAllBtn" onclick="copyAllAsMarkdown()" disabled title="Apply filters first">📝 Copy List</button>
     </div>
 
     <div id="resultCount" class="result-count"></div>
@@ -1037,6 +1045,7 @@ async function renderSearchPage(env) {
       
       currentPage = 1;
       renderTasks();
+      updateCopyButtonState();
     }
     
     function changePage(delta) {
@@ -1155,14 +1164,65 @@ async function renderSearchPage(env) {
       }
     }
 
-    async function showPrefixes() {
+    function updateCopyButtonState() {
+      const btn = document.getElementById('copyAllBtn');
+      const hasFilters = searchInput.value.trim() !== '' ||
+                         filterProject.value !== '' ||
+                         filterStatus.value !== '' ||
+                         filterDue.value !== '' ||
+                         filterMeOnly.checked;
+      btn.disabled = !hasFilters;
+      btn.title = hasFilters ? 'Copy filtered tasks as markdown' : 'Apply filters first';
+    }
+
+    async function copyAllAsMarkdown() {
+      if (filteredTasks.length === 0) {
+        alert('No tasks to copy');
+        return;
+      }
+
+      // Group tasks by project
+      const grouped = {};
+      for (const task of filteredTasks) {
+        if (!grouped[task.projectId]) {
+          grouped[task.projectId] = {
+            name: task.project,
+            prefix: task.projectPrefix,
+            tasks: []
+          };
+        }
+        grouped[task.projectId].tasks.push(task);
+      }
+
+      // Build markdown output
+      // Extract org slug from task URL using split instead of regex
+      const firstTaskUrl = filteredTasks[0] ? filteredTasks[0].url : '';
+      const urlParts = firstTaskUrl.split('app.productive.io/');
+      const orgSlug = urlParts.length > 1 ? urlParts[1].split('/')[0] : '1476-dotcollective';
+      
+      let markdown = '';
+      for (const projectId of Object.keys(grouped)) {
+        const group = grouped[projectId];
+        const projectUrl = 'https://app.productive.io/' + orgSlug + '/projects/' + projectId;
+        markdown += '[' + group.name + '](' + projectUrl + ')' + String.fromCharCode(10);
+        for (const task of group.tasks) {
+          markdown += '- [ ] [#' + task.ticketNumber + ' ' + task.title + '](' + task.url + ')' + String.fromCharCode(10);
+        }
+        markdown += String.fromCharCode(10);
+      }
+
       try {
-        const res = await fetch('/api/prefixes');
-        const data = await res.json();
-        const list = Object.entries(data.prefixMap).map(([id, p]) => p + ' → ' + id).join('\\n');
-        alert('Prefixes:\\n\\n' + list);
+        await navigator.clipboard.writeText(markdown.trim());
+        const btn = document.getElementById('copyAllBtn');
+        const originalText = btn.textContent;
+        btn.textContent = '✓ Copied';
+        btn.classList.add('copied');
+        setTimeout(function() {
+          btn.textContent = originalText;
+          btn.classList.remove('copied');
+        }, 2000);
       } catch (e) {
-        alert('❌ ' + e.message);
+        alert('Failed to copy: ' + e.message);
       }
     }
 

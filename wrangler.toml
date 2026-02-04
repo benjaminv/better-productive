@@ -1,0 +1,21 @@
+name = "productive-search"
+main = "src/index.js"
+compatibility_date = "2024-01-01"
+
+# KV namespace for storing tasks
+[[kv_namespaces]]
+binding = "TASKS_KV"
+id = "41e90a11648d4124a4ceeb039aece31e"
+
+# Cron trigger - runs every hour
+[triggers]
+crons = ["0 * * * *"]
+
+# Environment variables
+[vars]
+PRODUCTIVE_ORG_ID = "1476"
+PRODUCTIVE_ORG_SLUG = "dotcollective"
+PRODUCTIVE_PERSON_ID = "992100"  # Ben Hu - filter tasks to only your assigned ones
+
+# Secrets (use: wrangler secret put PRODUCTIVE_API_TOKEN)
+PRODUCTIVE_API_TOKEN = "085c53ec-d9d8-4136-919c-db587c246fcf"

@@ -1,0 +1,414 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Productive Task Search</title>
+  <style>
+{{STYLES}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div style="display: flex; justify-content: center; align-items: center; gap: 0.75rem;">
+        <h1>Better Productive.io</h1>
+        <button id="themeToggle" class="btn" style="padding: 0.375rem 0.5rem; font-size: 1rem;" title="Toggle theme">🌙</button>
+      </div>
+      <p class="stats">{{STATS_TEXT}} • Synced: {{LAST_UPDATED}}</p>
+    </header>
+
+    <div class="search-box">
+      <input type="text" class="search-input" id="searchInput" 
+             placeholder="Search by ticket (PRIM-242), title, status..." autofocus>
+    </div>
+
+    <div class="filters" id="filtersContainer">
+      <div class="filter-group">
+        <span class="filter-label">Project:</span>
+        <select class="filter-select" id="filterProject" style="min-width: 180px;">
+          <option value="">All</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Status:</span>
+        <select class="filter-select" id="filterStatus">
+          <option value="">All</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <span class="filter-label">Due:</span>
+        <select class="filter-select" id="filterDue">
+          <option value="">Any</option>
+          <option value="overdue">Overdue</option>
+          <option value="today">Today</option>
+          <option value="week">This Week</option>
+          <option value="month">This Month</option>
+          <option value="year">This Year</option>
+          <option value="none">No Due Date</option>
+        </select>
+      </div>
+      <div class="filter-group">
+        <label style="display: flex; align-items: center; gap: 0.25rem; cursor: pointer; font-size: 0.8rem;">
+          <input type="checkbox" id="filterMeOnly" style="accent-color: var(--accent);">
+          <span>Assigned to me</span>
+        </label>
+      </div>
+      <button class="btn btn-clear" onclick="clearFilters()">✕ Clear</button>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="updateNow()">🔄 Sync</button>
+      <button class="btn btn-primary" id="copyAllBtn" onclick="copyAllAsMarkdown()" disabled title="Apply filters first">📝 Copy List</button>
+    </div>
+
+    <div id="resultCount" class="result-count"></div>
+    <div id="results" class="results">
+      <div class="loading">Loading...</div>
+    </div>
+  </div>
+
+  <script>
+    // Theme toggle
+    const themeToggle = document.getElementById('themeToggle');
+    const savedTheme = localStorage.getItem('theme') || 'dark';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    themeToggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
+    
+    themeToggle.addEventListener('click', () => {
+      const current = document.documentElement.getAttribute('data-theme') || 'dark';
+      const next = current === 'dark' ? 'light' : 'dark';
+      document.documentElement.setAttribute('data-theme', next);
+      localStorage.setItem('theme', next);
+      themeToggle.textContent = next === 'dark' ? '🌙' : '☀️';
+    });
+
+    const searchInput = document.getElementById('searchInput');
+    const resultsDiv = document.getElementById('results');
+    const resultCountDiv = document.getElementById('resultCount');
+    const filterProject = document.getElementById('filterProject');
+    const filterStatus = document.getElementById('filterStatus');
+    const filterDue = document.getElementById('filterDue');
+    const filterMeOnly = document.getElementById('filterMeOnly');
+    
+    let allTasks = [];
+    let filteredTasks = [];
+    let currentPersonId = null;
+    let debounceTimer;
+    
+    // Pagination
+    let currentPage = 1;
+    const pageSize = 50;
+
+    // Load filters and initial data
+    loadFilters();
+    loadTasks();
+
+    // Event listeners
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        searchInput.focus();
+        searchInput.select();
+      }
+      // Left/Right arrow for pagination
+      if (document.activeElement !== searchInput) {
+        if (e.key === 'ArrowLeft') changePage(-1);
+        if (e.key === 'ArrowRight') changePage(1);
+      }
+    });
+
+    searchInput.addEventListener('input', () => {
+      clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(applyFilters, 200);
+    });
+
+    filterProject.addEventListener('change', applyFilters);
+    filterStatus.addEventListener('change', applyFilters);
+    filterDue.addEventListener('change', applyFilters);
+    filterMeOnly.addEventListener('change', applyFilters);
+
+    async function loadFilters() {
+      try {
+        const res = await fetch('/api/filters');
+        if (!res.ok) throw new Error('Failed to load filters');
+        const data = await res.json();
+        
+        // Populate Projects
+        data.projects.forEach(p => {
+          const option = document.createElement('option');
+          option.value = p.prefix;
+          option.textContent = p.name + ' (' + p.prefix + ')';
+          filterProject.appendChild(option);
+        });
+        
+        // Populate Statuses
+        data.statuses.forEach(s => {
+          const option = document.createElement('option');
+          option.value = s;
+          option.textContent = s;
+          filterStatus.appendChild(option);
+        });
+        
+        // Store current person ID
+        currentPersonId = data.currentPersonId;
+        
+      } catch (err) {
+        console.error('Error loading filters:', err);
+      }
+    }
+
+    async function loadTasks() {
+      try {
+        const res = await fetch('/api/search?q=');
+        if (!res.ok) throw new Error('Failed to load tasks');
+        const data = await res.json();
+        allTasks = data.tasks;
+        filteredTasks = allTasks;
+        applyFilters();
+      } catch (err) {
+        resultsDiv.innerHTML = '<div class="error">Failed to load tasks</div>';
+      }
+    }
+
+    function applyFilters() {
+      const query = searchInput.value.toLowerCase().trim();
+      const project = filterProject.value;
+      const status = filterStatus.value;
+      const due = filterDue.value;
+      const meOnly = filterMeOnly.checked;
+
+      // Date calculations for filters
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+      const tomorrow = today + 86400000;
+      const nextWeek = today + (7 * 86400000);
+      const nextMonth = today + (30 * 86400000);
+      const nextYear = today + (365 * 86400000);
+
+      filteredTasks = allTasks.filter(task => {
+        // Text search
+        if (query) {
+          const searchText = (task.ticketKey + ' ' + task.title + ' ' + task.status + ' ' + task.assignee + ' ' + task.project).toLowerCase();
+          if (!searchText.includes(query)) return false;
+        }
+        
+        // Project filter
+        if (project && task.projectPrefix !== project) return false;
+        
+        // Status filter
+        if (status && task.status !== status) return false;
+        
+        // Assigned to me filter
+        if (meOnly && task.assigneeId !== currentPersonId) return false;
+
+        // Due date filter
+        if (due) {
+          if (due === 'none') return !task.dueDate;
+          if (!task.dueDate) return false;
+          
+          const dueDate = new Date(task.dueDate).getTime();
+          
+          if (due === 'overdue') return dueDate < today;
+          if (due === 'today') return dueDate >= today && dueDate < tomorrow;
+          if (due === 'week') return dueDate >= today && dueDate < nextWeek;
+          if (due === 'month') return dueDate >= today && dueDate < nextMonth;
+          if (due === 'year') return dueDate >= today && dueDate < nextYear;
+        }
+
+        return true;
+      });
+      
+      currentPage = 1;
+      renderTasks();
+      updateCopyButtonState();
+    }
+    
+    function changePage(delta) {
+      const maxPage = Math.ceil(filteredTasks.length / pageSize) || 1;
+      const newPage = currentPage + delta;
+      if (newPage >= 1 && newPage <= maxPage) {
+        currentPage = newPage;
+        renderTasks();
+        resultsDiv.scrollTop = 0;
+      }
+    }
+
+    function renderTasks() {
+      if (filteredTasks.length === 0) {
+        resultsDiv.innerHTML = '<div class="empty">No tasks found</div>';
+        resultCountDiv.textContent = '0 results';
+        return;
+      }
+      
+      const startIndex = (currentPage - 1) * pageSize;
+      const endIndex = Math.min(startIndex + pageSize, filteredTasks.length);
+      const pageTasks = filteredTasks.slice(startIndex, endIndex);
+      
+      // Pagination controls
+      const maxPage = Math.ceil(filteredTasks.length / pageSize);
+      const paginationHtml = maxPage > 1 ? 
+        '<div style="display: flex; justify-content: center; align-items: center; gap: 1rem; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">' +
+          '<button class="btn btn-secondary" onclick="changePage(-1)" ' + (currentPage === 1 ? 'disabled' : '') + ' style="padding: 0.25rem 0.75rem;">Previous</button>' +
+          '<span style="font-size: 0.9rem; color: var(--text-secondary);">Page ' + currentPage + ' of ' + maxPage + '</span>' +
+          '<button class="btn btn-secondary" onclick="changePage(1)" ' + (currentPage === maxPage ? 'disabled' : '') + ' style="padding: 0.25rem 0.75rem;">Next</button>' +
+        '</div>' : '';
+
+      resultsDiv.innerHTML = pageTasks.map(renderTask).join('') + paginationHtml;
+      resultCountDiv.textContent = filteredTasks.length + ' results' + (filteredTasks.length > pageSize ? ' (showing ' + (startIndex + 1) + '-' + endIndex + ')' : '');
+    }
+
+    function clearFilters() {
+      searchInput.value = '';
+      filterProject.value = '';
+      filterStatus.value = '';
+      filterDue.value = '';
+      filterMeOnly.checked = false;
+      applyFilters();
+    }
+
+    function renderTask(task) {
+      const statusClass = getStatusClass(task.status);
+      const created = task.createdAt ? formatDate(task.createdAt) : '';
+      const updated = task.updatedAt ? formatDate(task.updatedAt) : '';
+      
+      return `
+        <div class="task-card">
+          <div class="task-header">
+            <span class="ticket-key">
+              <a href="/browse/${task.ticketKey}" title="Open in Productive">${task.ticketKey}</a>
+            </span>
+            <div class="task-title">
+              <a href="${task.url}" target="_blank">#${task.ticketNumber} ${escapeHtml(task.title)}</a>
+            </div>
+            <div class="task-actions">
+              <button class="copy-btn" onclick="copyMarkdown('${task.ticketNumber}', '${escapeJs(task.title)}', '${task.url}', this)">📋</button>
+            </div>
+          </div>
+          <div class="task-meta">
+            <span class="status-badge ${statusClass}">${escapeHtml(task.status)}</span>
+            <span>👤 ${escapeHtml(task.assignee)}</span>
+            <span>📁 ${escapeHtml(task.project)}</span>
+            ${task.dueDate ? '<span>📅 ' + task.dueDate + '</span>' : ''}
+          </div>
+          <div class="task-dates">
+            ${created ? '<span>Created: ' + created + '</span>' : ''}
+            ${updated ? '<span>Updated: ' + updated + '</span>' : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function formatDate(iso) {
+      if (!iso) return '';
+      return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' });
+    }
+
+    function getStatusClass(status) {
+      const s = status.toLowerCase();
+      if (s.includes('done') || s.includes('complete') || s.includes('closed')) return 'status-done';
+      if (s.includes('progress') || s.includes('review') || s.includes('testing')) return 'status-progress';
+      return 'status-todo';
+    }
+
+    function copyMarkdown(number, title, url, btn) {
+      const markdown = '[#' + number + ' ' + title + '](' + url + ')';
+      navigator.clipboard.writeText(markdown).then(() => {
+        btn.textContent = '✓';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = '📋';
+          btn.classList.remove('copied');
+        }, 2000);
+      });
+    }
+
+    async function updateNow() {
+      resultsDiv.innerHTML = '<div class="loading">🔄 Syncing...</div>';
+      try {
+        const res = await fetch('/update');
+        const data = await res.json();
+        if (data.success) {
+          alert('✅ Synced ' + data.taskCount + ' tasks');
+          location.reload();
+        } else {
+          alert('❌ ' + data.error);
+        }
+      } catch (e) {
+        alert('❌ ' + e.message);
+      }
+    }
+
+    function updateCopyButtonState() {
+      const btn = document.getElementById('copyAllBtn');
+      const hasFilters = searchInput.value.trim() !== '' ||
+                         filterProject.value !== '' ||
+                         filterStatus.value !== '' ||
+                         filterDue.value !== '' ||
+                         filterMeOnly.checked;
+      btn.disabled = !hasFilters;
+      btn.title = hasFilters ? 'Copy filtered tasks as markdown' : 'Apply filters first';
+    }
+
+    async function copyAllAsMarkdown() {
+      if (filteredTasks.length === 0) {
+        alert('No tasks to copy');
+        return;
+      }
+
+      // Group tasks by project
+      const grouped = {};
+      for (const task of filteredTasks) {
+        if (!grouped[task.projectId]) {
+          grouped[task.projectId] = {
+            name: task.project,
+            prefix: task.projectPrefix,
+            tasks: []
+          };
+        }
+        grouped[task.projectId].tasks.push(task);
+      }
+
+      // Build markdown output
+      const firstTaskUrl = filteredTasks[0] ? filteredTasks[0].url : '';
+      const urlParts = firstTaskUrl.split('app.productive.io/');
+      const orgSlug = urlParts.length > 1 ? urlParts[1].split('/')[0] : '1476-dotcollective';
+      
+      let markdown = '';
+      for (const projectId of Object.keys(grouped)) {
+        const group = grouped[projectId];
+        const projectUrl = 'https://app.productive.io/' + orgSlug + '/projects/' + projectId;
+        markdown += '[' + group.name + '](' + projectUrl + ')\n';
+        for (const task of group.tasks) {
+          markdown += '- [ ] [#' + task.ticketNumber + ' ' + task.title + '](' + task.url + ')\n';
+        }
+        markdown += '\n';
+      }
+
+      try {
+        await navigator.clipboard.writeText(markdown.trim());
+        const btn = document.getElementById('copyAllBtn');
+        const originalText = btn.textContent;
+        btn.textContent = '✓ Copied';
+        btn.classList.add('copied');
+        setTimeout(function() {
+          btn.textContent = originalText;
+          btn.classList.remove('copied');
+        }, 2000);
+      } catch (e) {
+        alert('Failed to copy: ' + e.message);
+      }
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+    }
+
+    function escapeJs(str) {
+      if (!str) return '';
+      return str.replace(/[\\\']/g, '\\$&').replace(/"/g, '\\"');
+    }
+  </script>
+</body>
+</html>

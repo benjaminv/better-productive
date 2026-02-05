@@ -22,3 +22,8 @@ PRODUCTIVE_PERSON_ID = "992100"  # Optional - auto-detected from API if not set
 
 # Secrets (use: wrangler secret put PRODUCTIVE_API_TOKEN)
 PRODUCTIVE_API_TOKEN = "085c53ec-d9d8-4136-919c-db587c246fcf"
+
+# Import HTML and CSS files as text modules
+[[rules]]
+type = "Text"
+globs = ["**/*.html", "**/*.css"]

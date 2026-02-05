@@ -4,6 +4,28 @@
 import htmlTemplate from './template.html';
 import styles from './styles.css';
 
+// Static assets
+import logoSvg from './assets/logo.svg';
+import favicon from './assets/favicon.ico';
+import favicon16 from './assets/favicon-16x16.png';
+import favicon32 from './assets/favicon-32x32.png';
+import appleTouchIcon from './assets/apple-touch-icon.png';
+import androidChrome192 from './assets/android-chrome-192x192.png';
+import androidChrome512 from './assets/android-chrome-512x512.png';
+import webmanifest from './assets/site.webmanifest';
+
+// Static asset map for routing
+const staticAssets = {
+  '/logo.svg': { content: logoSvg, type: 'image/svg+xml' },
+  '/favicon.ico': { content: favicon, type: 'image/x-icon', binary: true },
+  '/favicon-16x16.png': { content: favicon16, type: 'image/png', binary: true },
+  '/favicon-32x32.png': { content: favicon32, type: 'image/png', binary: true },
+  '/apple-touch-icon.png': { content: appleTouchIcon, type: 'image/png', binary: true },
+  '/android-chrome-192x192.png': { content: androidChrome192, type: 'image/png', binary: true },
+  '/android-chrome-512x512.png': { content: androidChrome512, type: 'image/png', binary: true },
+  '/site.webmanifest': { content: webmanifest, type: 'application/manifest+json' }
+};
+
 export default {
   // Cron handler - runs every hour to sync tasks
   async scheduled(event, env, ctx) {
@@ -26,6 +48,17 @@ export default {
     }
 
     try {
+      // Static asset routes
+      const asset = staticAssets[url.pathname];
+      if (asset) {
+        return new Response(asset.content, {
+          headers: { 
+            'Content-Type': asset.type,
+            'Cache-Control': 'public, max-age=86400'
+          }
+        });
+      }
+
       // Routes:
       // GET /              → Search UI (HTML)
       // GET /browse/PRIM-X → Redirect to Productive.io task (Jira-style)
@@ -55,6 +88,7 @@ export default {
         default:
           return new Response('Not Found', { status: 404 });
       }
+
     } catch (error) {
       console.error('Request error:', error);
       return new Response(`Error: ${error.message}`, { status: 500 });

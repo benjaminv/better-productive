@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
+  <g clip-path="url(#a)" transform="translate(714.87 223.495)scale(15.82002)" style="transform-origin:47.427px 18.6314px">
+    <path d="M6.036 28.89.17 18.977a1.217 1.217 0 0 1 .426-1.667l4.633-2.74a1.217 1.217 0 0 1 1.666.426l3.3 5.579 3.424-5.89c4.28-7.018 8.712.738 6.693 4.034l-5.89 10.139a2.84 2.84 0 0 1-2.443 1.412l-3.492.015a2.84 2.84 0 0 1-2.451-1.393z" fill="url(#b)"/>
+    <path d="M30.847 21.445a4.4 4.4 0 1 1-8.802.001 4.4 4.4 0 0 1 8.802 0zm-18.259 3.176c.966 1.64 3.34 1.632 4.297-.014l3.429-5.9c1.787-2.917 3.807-4.476 6.333-4.82.612-.083 1.211-.224 1.374-1.145l.938-5.259a1.234 1.234 0 0 0-1.207-1.485c-4.603 0-9.956 1.825-14.131 8.672l-3.426 5.892z" fill="url(#c)"/>
+  </g>
+  <defs>
+    <linearGradient id="b" x1="-1.5" y1="9" x2="13" y2="30" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ab40ff"/>
+      <stop offset="1" stop-color="#5d2bff"/>
+    </linearGradient>
+    <linearGradient id="c" x1="24.5" y1="8" x2="13.886" y2="23.709" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ab40ff"/>
+      <stop offset="1" stop-color="#2d00ad"/>
+    </linearGradient>
+    <linearGradient id="d" x1="24.5" y1="8" x2="13.886" y2="23.709" gradientUnits="userSpaceOnUse" gradientTransform="translate(11.986 60.705)scale(15.82002)">
+      <stop stop-color="#ab40ff"/>
+      <stop offset="1" stop-color="#2d00ad"/>
+    </linearGradient>
+    <clipPath id="a">
+      <path fill="#fff" d="M0 6h180v24.3H0z"/>
+    </clipPath>
+  </defs>
+  <path d="M500 399.975c.017 53.588-57.997 87.092-104.424 60.301a69.68 69.68 0 0 1-34.825-60.284c0-53.596 58.03-87.099 104.449-60.301 21.539 12.435 34.8 35.413 34.8 60.301z" fill="url(#d)" style="transform-origin:762.182px 269.881px"/>
+</svg>

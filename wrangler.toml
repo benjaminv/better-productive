@@ -26,4 +26,9 @@ PRODUCTIVE_API_TOKEN = "085c53ec-d9d8-4136-919c-db587c246fcf"
 # Import HTML and CSS files as text modules
 [[rules]]
 type = "Text"
-globs = ["**/*.html", "**/*.css"]
+globs = ["**/*.html", "**/*.css", "**/*.svg", "**/*.webmanifest"]
+
+# Import binary files as data modules
+[[rules]]
+type = "Data"
+globs = ["**/*.png", "**/*.ico"]

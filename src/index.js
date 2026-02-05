@@ -2,6 +2,7 @@
 // A Cloudflare Worker that provides searchable task database with /browse/PRIM-242 redirects
 
 import htmlTemplate from './template.html';
+import authTemplate from './auth.html';
 import styles from './styles.css';
 
 // Static assets
@@ -26,6 +27,133 @@ const staticAssets = {
   '/site.webmanifest': { content: webmanifest, type: 'application/manifest+json' }
 };
 
+// Session cookie name
+const SESSION_COOKIE = 'bp_session';
+const SESSION_DURATION = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+// =============================================================================
+// Configuration Helper - Check Env then KV
+// =============================================================================
+
+async function getConfig(env) {
+  // Priority 1: Environment variables / secrets
+  let apiToken = env.PRODUCTIVE_API_TOKEN || null;
+  let appPin = env.APP_PIN || null;
+  
+  // Priority 2: KV storage fallback
+  if (!apiToken && env.TASKS_KV) {
+    apiToken = await env.TASKS_KV.get('config_api_token');
+  }
+  if (!appPin && env.TASKS_KV) {
+    appPin = await env.TASKS_KV.get('config_app_pin');
+  }
+  
+  return {
+    apiToken,
+    appPin,
+    setupToken: env.SETUP_TOKEN || null,
+    isConfigured: !!apiToken,
+    isProtected: !!appPin
+  };
+}
+
+// =============================================================================
+// Authentication Helpers
+// =============================================================================
+
+function generateSessionToken() {
+  const array = new Uint8Array(32);
+  crypto.getRandomValues(array);
+  return Array.from(array, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function hashPin(pin) {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(pin);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function parseSessionCookie(request) {
+  const cookie = request.headers.get('Cookie') || '';
+  const match = cookie.match(new RegExp(`${SESSION_COOKIE}=([^;]+)`));
+  return match ? match[1] : null;
+}
+
+async function isAuthenticated(request, env) {
+  const config = await getConfig(env);
+  
+  // If no PIN is set, no auth required
+  if (!config.isProtected) {
+    return true;
+  }
+  
+  // Check for valid session cookie
+  const sessionToken = parseSessionCookie(request);
+  if (!sessionToken) {
+    return false;
+  }
+  
+  // Verify session exists in KV
+  const session = await env.TASKS_KV.get(`session_${sessionToken}`);
+  return !!session;
+}
+
+async function createSession(env) {
+  const token = generateSessionToken();
+  const expires = Date.now() + SESSION_DURATION;
+  
+  // Store session in KV with expiration
+  await env.TASKS_KV.put(`session_${token}`, JSON.stringify({ created: Date.now() }), {
+    expirationTtl: Math.floor(SESSION_DURATION / 1000)
+  });
+  
+  return {
+    token,
+    cookie: `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${Math.floor(SESSION_DURATION / 1000)}`
+  };
+}
+
+async function destroySession(request, env) {
+  const sessionToken = parseSessionCookie(request);
+  if (sessionToken) {
+    await env.TASKS_KV.delete(`session_${sessionToken}`);
+  }
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
+}
+
+// =============================================================================
+// Auth Page Renderer
+// =============================================================================
+
+function renderAuthPage({ title, subtitle, fields, submitText, error, success, footer }) {
+  let html = authTemplate
+    .replace(/\{\{PAGE_TITLE\}\}/g, title)
+    .replace('{{PAGE_SUBTITLE}}', subtitle)
+    .replace('{{SUBMIT_TEXT}}', submitText)
+    .replace('{{ERROR_MESSAGE}}', error ? `<div class="error-message">${error}</div>` : '')
+    .replace('{{SUCCESS_MESSAGE}}', success ? `<div class="success-message">${success}</div>` : '')
+    .replace('{{FOOTER_CONTENT}}', footer || '');
+  
+  // Build form fields
+  const fieldsHtml = fields.map(f => `
+    <div class="form-group">
+      <label for="${f.name}">${f.label}</label>
+      <input type="${f.type}" name="${f.name}" id="${f.name}" 
+             class="form-input" placeholder="${f.placeholder || ''}" 
+             ${f.required ? 'required' : ''} ${f.autocomplete ? `autocomplete="${f.autocomplete}"` : ''}>
+      ${f.hint ? `<div class="hint">${f.hint}</div>` : ''}
+    </div>
+  `).join('');
+  
+  html = html.replace('{{FORM_FIELDS}}', fieldsHtml);
+  
+  return new Response(html, {
+    headers: { 'Content-Type': 'text/html' }
+  });
+}
+
 export default {
   // Cron handler - runs every hour to sync tasks
   async scheduled(event, env, ctx) {
@@ -48,7 +176,7 @@ export default {
     }
 
     try {
-      // Static asset routes
+      // Static asset routes (always public)
       const asset = staticAssets[url.pathname];
       if (asset) {
         return new Response(asset.content, {
@@ -59,13 +187,141 @@ export default {
         });
       }
 
-      // Routes:
-      // GET /              → Search UI (HTML)
-      // GET /browse/PRIM-X → Redirect to Productive.io task (Jira-style)
-      // GET /api/search    → JSON search results
-      // GET /api/prefixes  → List all project prefixes
-      // GET /api/filters   → List all available filters
-      // POST /update       → Manual database refresh
+      // Get current configuration
+      const config = await getConfig(env);
+
+      // =================================================================
+      // Setup Route - First-time configuration
+      // =================================================================
+      if (url.pathname === '/setup') {
+        // If already configured, redirect to home
+        if (config.isConfigured) {
+          return Response.redirect(new URL('/', url.origin), 302);
+        }
+        
+        // Require SETUP_TOKEN if configured (security measure)
+        if (config.setupToken) {
+          const providedToken = url.searchParams.get('token');
+          if (providedToken !== config.setupToken) {
+            return renderAuthPage({
+              title: 'Setup Required',
+              subtitle: 'A setup token is required to configure this app.',
+              fields: [],
+              submitText: '',
+              error: 'Please add ?token=YOUR_SETUP_TOKEN to the URL to proceed.',
+              footer: '<div class="footer-text">Set SETUP_TOKEN via <code>wrangler secret put SETUP_TOKEN</code></div>'
+            });
+          }
+        }
+        
+        if (request.method === 'POST') {
+          return handleSetupPost(request, env, url);
+        }
+        
+        return renderAuthPage({
+          title: 'Welcome! 👋',
+          subtitle: 'Let\'s set up your Better Productive.io dashboard.',
+          fields: [
+            { 
+              name: 'api_token', 
+              label: 'Productive API Token', 
+              type: 'password', 
+              placeholder: 'Enter your API token',
+              hint: 'Get this from Productive.io → Settings → API',
+              required: true,
+              autocomplete: 'off'
+            },
+            { 
+              name: 'app_pin', 
+              label: 'App PIN (Optional)', 
+              type: 'password', 
+              placeholder: '4-8 digit PIN',
+              hint: 'Protect your dashboard with a PIN',
+              autocomplete: 'new-password'
+            }
+          ],
+          submitText: 'Complete Setup',
+          footer: '<div class="footer-text">Your credentials are stored securely in Cloudflare KV.</div>'
+        });
+      }
+
+      // =================================================================
+      // Login Route
+      // =================================================================
+      if (url.pathname === '/login') {
+        // If not configured, redirect to setup
+        if (!config.isConfigured) {
+          return Response.redirect(new URL('/setup', url.origin), 302);
+        }
+        
+        // If no PIN protection, redirect to home
+        if (!config.isProtected) {
+          return Response.redirect(new URL('/', url.origin), 302);
+        }
+        
+        // If already authenticated, redirect to home
+        if (await isAuthenticated(request, env)) {
+          return Response.redirect(new URL('/', url.origin), 302);
+        }
+        
+        if (request.method === 'POST') {
+          return handleLoginPost(request, env, url);
+        }
+        
+        return renderAuthPage({
+          title: 'Login',
+          subtitle: 'Enter your PIN to access the dashboard.',
+          fields: [
+            { 
+              name: 'pin', 
+              label: 'PIN', 
+              type: 'password', 
+              placeholder: 'Enter your PIN',
+              required: true,
+              autocomplete: 'current-password'
+            }
+          ],
+          submitText: 'Login'
+        });
+      }
+
+      // =================================================================
+      // Logout Route
+      // =================================================================
+      if (url.pathname === '/logout') {
+        const clearCookie = await destroySession(request, env);
+        return new Response(null, {
+          status: 302,
+          headers: {
+            'Location': '/login',
+            'Set-Cookie': clearCookie
+          }
+        });
+      }
+
+      // =================================================================
+      // Check Configuration - Redirect to setup if not configured
+      // =================================================================
+      if (!config.isConfigured) {
+        return Response.redirect(new URL('/setup', url.origin), 302);
+      }
+
+      // =================================================================
+      // Check Authentication for Protected Routes
+      // =================================================================
+      const publicRoutes = ['/api/'];
+      const isPublicRoute = publicRoutes.some(r => url.pathname.startsWith(r));
+      
+      if (!isPublicRoute && config.isProtected) {
+        const authenticated = await isAuthenticated(request, env);
+        if (!authenticated) {
+          return Response.redirect(new URL('/login', url.origin), 302);
+        }
+      }
+
+      // =================================================================
+      // Main Application Routes
+      // =================================================================
 
       // Handle /browse/PRIM-242 style URLs
       if (url.pathname.startsWith('/browse/')) {
@@ -95,6 +351,152 @@ export default {
     }
   }
 };
+
+// =============================================================================
+// Setup & Login Handlers
+// =============================================================================
+
+async function handleSetupPost(request, env, url) {
+  try {
+    const formData = await request.formData();
+    const apiToken = formData.get('api_token')?.trim();
+    const appPin = formData.get('app_pin')?.trim();
+    
+    if (!apiToken) {
+      return renderAuthPage({
+        title: 'Welcome! 👋',
+        subtitle: 'Let\'s set up your Better Productive.io dashboard.',
+        fields: [
+          { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
+          { name: 'app_pin', label: 'App PIN (Optional)', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', autocomplete: 'new-password' }
+        ],
+        submitText: 'Complete Setup',
+        error: 'API Token is required.'
+      });
+    }
+    
+    // Validate API token by making a test request
+    const testResponse = await fetch('https://api.productive.io/api/v2/organizations', {
+      headers: {
+        'X-Auth-Token': apiToken,
+        'Content-Type': 'application/vnd.api+json'
+      }
+    });
+    
+    if (!testResponse.ok) {
+      return renderAuthPage({
+        title: 'Welcome! 👋',
+        subtitle: 'Let\'s set up your Better Productive.io dashboard.',
+        fields: [
+          { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
+          { name: 'app_pin', label: 'App PIN (Optional)', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', autocomplete: 'new-password' }
+        ],
+        submitText: 'Complete Setup',
+        error: 'Invalid API Token. Please check and try again.'
+      });
+    }
+    
+    // Store configuration in KV
+    await env.TASKS_KV.put('config_api_token', apiToken);
+    
+    if (appPin) {
+      // Validate PIN format (4-8 digits)
+      if (!/^\d{4,8}$/.test(appPin)) {
+        return renderAuthPage({
+          title: 'Welcome! 👋',
+          subtitle: 'Let\'s set up your Better Productive.io dashboard.',
+          fields: [
+            { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
+            { name: 'app_pin', label: 'App PIN (Optional)', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', autocomplete: 'new-password' }
+          ],
+          submitText: 'Complete Setup',
+          error: 'PIN must be 4-8 digits.'
+        });
+      }
+      const hashedPin = await hashPin(appPin);
+      await env.TASKS_KV.put('config_app_pin', hashedPin);
+    }
+    
+    // Redirect to login if PIN was set, otherwise to home
+    const redirectUrl = appPin ? '/login' : '/';
+    return Response.redirect(new URL(redirectUrl, url.origin), 302);
+    
+  } catch (error) {
+    console.error('Setup error:', error);
+    return renderAuthPage({
+      title: 'Welcome! 👋',
+      subtitle: 'Let\'s set up your Better Productive.io dashboard.',
+      fields: [
+        { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
+        { name: 'app_pin', label: 'App PIN (Optional)', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', autocomplete: 'new-password' }
+      ],
+      submitText: 'Complete Setup',
+      error: `Setup failed: ${error.message}`
+    });
+  }
+}
+
+async function handleLoginPost(request, env, url) {
+  try {
+    const formData = await request.formData();
+    const pin = formData.get('pin')?.trim();
+    
+    if (!pin) {
+      return renderAuthPage({
+        title: 'Login',
+        subtitle: 'Enter your PIN to access the dashboard.',
+        fields: [{ name: 'pin', label: 'PIN', type: 'password', placeholder: 'Enter your PIN', required: true, autocomplete: 'current-password' }],
+        submitText: 'Login',
+        error: 'Please enter your PIN.'
+      });
+    }
+    
+    // Check PIN - env var takes priority (plaintext), then KV (hashed)
+    let isValidPin = false;
+    
+    if (env.APP_PIN) {
+      // Compare against plaintext env var (convert to string for comparison)
+      isValidPin = (pin === String(env.APP_PIN));
+    } else {
+      // Compare against hashed KV value
+      const storedPinHash = await env.TASKS_KV.get('config_app_pin');
+      if (storedPinHash) {
+        const inputPinHash = await hashPin(pin);
+        isValidPin = (inputPinHash === storedPinHash);
+      }
+    }
+    
+    if (!isValidPin) {
+      return renderAuthPage({
+        title: 'Login',
+        subtitle: 'Enter your PIN to access the dashboard.',
+        fields: [{ name: 'pin', label: 'PIN', type: 'password', placeholder: 'Enter your PIN', required: true, autocomplete: 'current-password' }],
+        submitText: 'Login',
+        error: 'Incorrect PIN. Please try again.'
+      });
+    }
+    
+    // Create session and redirect
+    const session = await createSession(env);
+    return new Response(null, {
+      status: 302,
+      headers: {
+        'Location': '/',
+        'Set-Cookie': session.cookie
+      }
+    });
+    
+  } catch (error) {
+    console.error('Login error:', error);
+    return renderAuthPage({
+      title: 'Login',
+      subtitle: 'Enter your PIN to access the dashboard.',
+      fields: [{ name: 'pin', label: 'PIN', type: 'password', placeholder: 'Enter your PIN', required: true, autocomplete: 'current-password' }],
+      submitText: 'Login',
+      error: `Login failed: ${error.message}`
+    });
+  }
+}
 
 // =============================================================================
 // CORS Helper
@@ -171,7 +573,8 @@ function generateAllPrefixes(projects) {
 
 // Get organization info from API or cache/env
 async function getOrganizationInfo(env) {
-  const apiToken = env.PRODUCTIVE_API_TOKEN;
+  const config = await getConfig(env);
+  const apiToken = config.apiToken;
   
   // Check if hardcoded in env first
   if (env.PRODUCTIVE_ORG_ID && env.PRODUCTIVE_ORG_SLUG) {
@@ -234,7 +637,8 @@ async function getOrganizationInfo(env) {
 
 // Get the current user's person ID from API or cache
 async function getPersonId(env, orgId) {
-  const apiToken = env.PRODUCTIVE_API_TOKEN;
+  const config = await getConfig(env);
+  const apiToken = config.apiToken;
   
   // Check if we have it cached in KV
   const cached = await env.TASKS_KV.get('current_person_id');
@@ -281,7 +685,8 @@ async function getPersonId(env, orgId) {
 }
 
 async function updateTaskDatabase(env) {
-  const apiToken = env.PRODUCTIVE_API_TOKEN;
+  const config = await getConfig(env);
+  const apiToken = config.apiToken;
   
   if (!apiToken) {
     throw new Error('PRODUCTIVE_API_TOKEN not configured');
@@ -661,10 +1066,11 @@ async function handleManualUpdate(request, env) {
 // =============================================================================
 
 async function renderSearchPage(env) {
-  const [lastUpdated, taskCount, assignedCount] = await Promise.all([
+  const [lastUpdated, taskCount, assignedCount, config] = await Promise.all([
     env.TASKS_KV.get('last_updated'),
     env.TASKS_KV.get('task_count'),
-    env.TASKS_KV.get('assigned_count')
+    env.TASKS_KV.get('assigned_count'),
+    getConfig(env)
   ]);
 
   const lastUpdatedDisplay = lastUpdated
@@ -672,10 +1078,16 @@ async function renderSearchPage(env) {
     : 'Never';
     
   const statsText = `${taskCount || 0} tasks (${assignedCount || 0} assigned)`;
+  
+  // Show logout button only if PIN protection is enabled
+  const logoutButton = config.isProtected 
+    ? '<a href="/logout" class="btn" style="padding: 0.375rem 0.5rem; font-size: 0.8rem; text-decoration: none;" title="Logout">🔓</a>'
+    : '';
 
   // Replace placeholders in template
   return htmlTemplate
     .replace('{{STYLES}}', styles)
     .replace('{{STATS_TEXT}}', statsText)
-    .replace('{{LAST_UPDATED}}', lastUpdatedDisplay);
+    .replace('{{LAST_UPDATED}}', lastUpdatedDisplay)
+    .replace('{{LOGOUT_BUTTON}}', logoutButton);
 }

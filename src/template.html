@@ -17,14 +17,20 @@
 <body>
   <div class="container">
     <header>
-      <div style="display: flex; justify-content: center; align-items: center; gap: 0.75rem;">
-        <img src="/logo.svg" alt="Logo" style="width: 32px; height: 32px;">
-        <h1>Better Productive.io</h1>
-        <button id="themeToggle" class="btn" style="padding: 0.375rem 0.5rem; font-size: 1rem;" title="Toggle theme">🌙</button>
-        {{LOGOUT_BUTTON}}
+      <div class="header-top">
+        <div class="header-brand">
+          <img src="/logo.svg" alt="Logo">
+          <h1>Better Productive.io</h1>
+        </div>
+        <div class="header-actions">
+          <button id="themeToggle" class="icon-btn" title="Toggle theme">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2v2"/><path d="M14.837 16.385a6 6 0 1 1-7.223-7.222c.624-.147.97.66.715 1.248a4 4 0 0 0 5.26 5.259c.589-.255 1.396.09 1.248.715"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="m19 5-1.256 1.256"/><path d="M20 12h2"/>
+            </svg>
+          </button>
+          {{LOGOUT_BUTTON}}
+        </div>
       </div>
-      <p class="stats">{{STATS_TEXT}} • Synced: {{LAST_UPDATED}}</p>
-
     </header>
 
     <div class="search-box">
@@ -57,18 +63,28 @@
           <option value="none">No Due Date</option>
         </select>
       </div>
-      <div class="filter-group">
-        <label style="display: flex; align-items: center; gap: 0.25rem; cursor: pointer; font-size: 0.8rem;">
-          <input type="checkbox" id="filterMeOnly" style="accent-color: var(--accent);">
+      <div class="filter-row-last">
+        <label class="filter-checkbox">
+          <input type="checkbox" id="filterMeOnly">
           <span>Assigned to me</span>
         </label>
+        <button class="btn btn-clear" onclick="clearFilters()"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px;"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg> Clear</button>
       </div>
-      <button class="btn btn-clear" onclick="clearFilters()">✕ Clear</button>
     </div>
 
     <div class="actions">
-      <button class="btn btn-secondary" onclick="updateNow()">🔄 Sync</button>
-      <button class="btn btn-primary" id="copyAllBtn" onclick="copyAllAsMarkdown()" disabled title="Apply filters first">📝 Copy List</button>
+      <button class="btn btn-secondary" id="syncBtn" onclick="updateNow()">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;">
+          <path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/>
+        </svg>
+        Sync
+      </button>
+      <button class="btn btn-primary" id="copyAllBtn" onclick="copyAllAsMarkdown()" disabled title="Apply filters first"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>Copy List</button>
+      <div class="sync-progress" id="syncProgress">
+        <span id="syncProgressText">Syncing...</span>
+        <div class="sync-progress-bar" id="syncProgressBar"></div>
+      </div>
+      <span class="stats" style="margin-left: auto;">{{STATS_TEXT}} • Synced: {{LAST_UPDATED}}</span>
     </div>
 
     <div id="resultCount" class="result-count"></div>
@@ -82,14 +98,12 @@
     const themeToggle = document.getElementById('themeToggle');
     const savedTheme = localStorage.getItem('theme') || 'dark';
     document.documentElement.setAttribute('data-theme', savedTheme);
-    themeToggle.textContent = savedTheme === 'dark' ? '🌙' : '☀️';
     
     themeToggle.addEventListener('click', () => {
       const current = document.documentElement.getAttribute('data-theme') || 'dark';
       const next = current === 'dark' ? 'light' : 'dark';
       document.documentElement.setAttribute('data-theme', next);
       localStorage.setItem('theme', next);
-      themeToggle.textContent = next === 'dark' ? '🌙' : '☀️';
     });
 
     const searchInput = document.getElementById('searchInput');
@@ -291,14 +305,14 @@
               <a href="${task.url}" target="_blank">#${task.ticketNumber} ${escapeHtml(task.title)}</a>
             </div>
             <div class="task-actions">
-              <button class="copy-btn" onclick="copyMarkdown('${task.ticketNumber}', '${escapeJs(task.title)}', '${task.url}', this)">📋</button>
+              <button class="copy-btn" onclick="copyMarkdown('${task.ticketNumber}', '${escapeJs(task.title)}', '${task.url}', this)"><svg class="copy-icon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg></button>
             </div>
           </div>
           <div class="task-meta">
             <span class="status-badge ${statusClass}">${escapeHtml(task.status)}</span>
-            <span>👤 ${escapeHtml(task.assignee)}</span>
-            <span>📁 ${escapeHtml(task.project)}</span>
-            ${task.dueDate ? '<span>📅 ' + task.dueDate + '</span>' : ''}
+            <span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg> ${escapeHtml(task.assignee)}</span>
+            <span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg> ${escapeHtml(task.project)}</span>
+            ${task.dueDate ? '<span><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 14v2.2l1.6 1"/><path d="M16 2v4"/><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M3 10h5"/><path d="M8 2v4"/><circle cx="16" cy="16" r="6"/></svg> ' + task.dueDate + '</span>' : ''}
           </div>
           <div class="task-dates">
             ${created ? '<span>Created: ' + created + '</span>' : ''}
@@ -320,31 +334,80 @@
       return 'status-todo';
     }
 
+    // SVG icons for JS use
+    const checkIconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+    const copyIconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></svg>';
+    const xIconSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>';
+
     function copyMarkdown(number, title, url, btn) {
       const markdown = '[#' + number + ' ' + title + '](' + url + ')';
       navigator.clipboard.writeText(markdown).then(() => {
-        btn.textContent = '✓';
+        btn.innerHTML = checkIconSvg;
         btn.classList.add('copied');
         setTimeout(() => {
-          btn.textContent = '📋';
+          btn.innerHTML = copyIconSvg;
           btn.classList.remove('copied');
         }, 2000);
       });
     }
 
     async function updateNow() {
-      resultsDiv.innerHTML = '<div class="loading">🔄 Syncing...</div>';
+      const syncBtn = document.getElementById('syncBtn');
+      const syncProgress = document.getElementById('syncProgress');
+      const syncProgressText = document.getElementById('syncProgressText');
+      const syncProgressBar = document.getElementById('syncProgressBar');
+      
+      // Show progress, hide button
+      syncBtn.style.display = 'none';
+      syncProgress.classList.add('active');
+      syncProgressText.textContent = 'Connecting...';
+      
+      // Create progress segments (we'll use 8 segments)
+      const totalSegments = 8;
+      syncProgressBar.innerHTML = Array(totalSegments).fill(0)
+        .map(() => '<div class="sync-progress-segment"></div>').join('');
+      const segments = syncProgressBar.querySelectorAll('.sync-progress-segment');
+      
+      // Animate progress while waiting
+      let currentSegment = 0;
+      const progressInterval = setInterval(() => {
+        segments.forEach((s, i) => {
+          s.classList.remove('current', 'filled');
+          if (i < currentSegment) s.classList.add('filled');
+          if (i === currentSegment) s.classList.add('current');
+        });
+        if (currentSegment < totalSegments - 1) {
+          currentSegment++;
+          // Keep showing "Fetching tasks..." for most of the progress
+          if (currentSegment === 1) syncProgressText.textContent = 'Fetching tasks...';
+          if (currentSegment === totalSegments - 1) syncProgressText.textContent = 'Almost done...';
+        }
+      }, 600);
+      
       try {
         const res = await fetch('/update');
         const data = await res.json();
+        clearInterval(progressInterval);
+        
         if (data.success) {
-          alert('✅ Synced ' + data.taskCount + ' tasks');
-          location.reload();
+          // Fill all segments
+          segments.forEach(s => { s.classList.remove('current'); s.classList.add('filled'); });
+          syncProgressText.innerHTML = checkIconSvg + ' Synced ' + data.taskCount + ' tasks';
+          setTimeout(() => location.reload(), 1000);
         } else {
-          alert('❌ ' + data.error);
+          syncProgressText.innerHTML = xIconSvg + ' ' + data.error;
+          setTimeout(() => {
+            syncProgress.classList.remove('active');
+            syncBtn.style.display = '';
+          }, 3000);
         }
       } catch (e) {
-        alert('❌ ' + e.message);
+        clearInterval(progressInterval);
+        syncProgressText.innerHTML = xIconSvg + ' ' + e.message;
+        setTimeout(() => {
+          syncProgress.classList.remove('active');
+          syncBtn.style.display = '';
+        }, 3000);
       }
     }
 
@@ -397,11 +460,11 @@
       try {
         await navigator.clipboard.writeText(markdown.trim());
         const btn = document.getElementById('copyAllBtn');
-        const originalText = btn.textContent;
-        btn.textContent = '✓ Copied';
+        const originalHtml = btn.innerHTML;
+        btn.innerHTML = checkIconSvg + ' Copied';
         btn.classList.add('copied');
         setTimeout(function() {
-          btn.textContent = originalText;
+          btn.innerHTML = originalHtml;
           btn.classList.remove('copied');
         }, 2000);
       } catch (e) {

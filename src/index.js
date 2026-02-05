@@ -169,10 +169,61 @@ function generateAllPrefixes(projects) {
 // API Sync - Fetch all tasks from Productive.io
 // =============================================================================
 
-// Get the current user's person ID from API or cache
-async function getPersonId(env) {
+// Get organization info from API or cache/env
+async function getOrganizationInfo(env) {
   const apiToken = env.PRODUCTIVE_API_TOKEN;
-  const orgId = env.PRODUCTIVE_ORG_ID;
+  
+  // Check if hardcoded in env first
+  if (env.PRODUCTIVE_ORG_ID && env.PRODUCTIVE_ORG_SLUG) {
+    return {
+      orgId: env.PRODUCTIVE_ORG_ID,
+      orgSlug: env.PRODUCTIVE_ORG_SLUG
+    };
+  }
+  
+  // Check cache
+  const cachedOrg = await env.TASKS_KV.get('organization_info');
+  if (cachedOrg) {
+    return JSON.parse(cachedOrg);
+  }
+  
+  // Fetch from API - organizations endpoint doesn't need org ID header
+  const response = await fetch(
+    'https://api.productive.io/api/v2/organizations',
+    {
+      headers: {
+        'X-Auth-Token': apiToken,
+        'Content-Type': 'application/vnd.api+json'
+      }
+    }
+  );
+  
+  if (!response.ok) {
+    throw new Error('Failed to fetch organization info from API');
+  }
+  
+  const data = await response.json();
+  
+  // Get the first (usually only) organization
+  if (!data.data || data.data.length === 0) {
+    throw new Error('No organizations found for this API token');
+  }
+  
+  const org = data.data[0];
+  const orgInfo = {
+    orgId: org.id,
+    orgSlug: org.attributes?.slug || org.id
+  };
+  
+  // Cache it
+  await env.TASKS_KV.put('organization_info', JSON.stringify(orgInfo));
+  
+  return orgInfo;
+}
+
+// Get the current user's person ID from API or cache
+async function getPersonId(env, orgId) {
+  const apiToken = env.PRODUCTIVE_API_TOKEN;
   
   // Check if we have it cached in KV
   const cached = await env.TASKS_KV.get('current_person_id');
@@ -220,15 +271,16 @@ async function getPersonId(env) {
 
 async function updateTaskDatabase(env) {
   const apiToken = env.PRODUCTIVE_API_TOKEN;
-  const orgId = env.PRODUCTIVE_ORG_ID;
-  const orgSlug = env.PRODUCTIVE_ORG_SLUG || 'dotcollective';
   
-  // Get person ID from cache or API (no longer needs env var)
-  const personId = await getPersonId(env);
-
   if (!apiToken) {
     throw new Error('PRODUCTIVE_API_TOKEN not configured');
   }
+  
+  // Get organization info from cache or API (auto-detected)
+  const { orgId, orgSlug } = await getOrganizationInfo(env);
+  
+  // Get person ID from cache or API (auto-detected)
+  const personId = await getPersonId(env, orgId);
 
   const baseUrl = 'https://api.productive.io/api/v2/tasks';
   const headers = {

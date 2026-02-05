@@ -1,13 +1,17 @@
+# Productive.io Task Search - Cloudflare Worker Configuration
+# Copy this file to wrangler.toml and fill in your values
+
 name = "productive-search"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
 
 # KV namespace for storing tasks
+# Create with: wrangler kv namespace create TASKS_KV
 [[kv_namespaces]]
 binding = "TASKS_KV"
-id = "41e90a11648d4124a4ceeb039aece31e"
+id = "YOUR_KV_NAMESPACE_ID"
 
-# Cron triggers - runs every hour from 7am to 7pm AEDT, Mon-Fri
+# Cron triggers - runs during business hours (adjust for your timezone)
 [triggers]
 crons = [
   "0 20-23 * * SUN-THU", # Covers 7:00 AM – 10:00 AM AEDT (Mon-Fri)
@@ -20,8 +24,8 @@ crons = [
 # PRODUCTIVE_ORG_SLUG = "your-org-slug"    # Auto-detected from API  
 # PRODUCTIVE_PERSON_ID = "your_person_id"  # Auto-detected from API
 
-# Secrets are stored securely via: wrangler secret put PRODUCTIVE_API_TOKEN
-# For local dev, create a .dev.vars file with: PRODUCTIVE_API_TOKEN=your_token
+# Secrets - set via: wrangler secret put PRODUCTIVE_API_TOKEN
+# DO NOT put your API token in this file!
 
 # Import HTML and CSS files as text modules
 [[rules]]

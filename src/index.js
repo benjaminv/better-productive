@@ -210,10 +210,21 @@ async function getOrganizationInfo(env) {
   }
   
   const org = data.data[0];
+  const attrs = org.attributes || {};
+  
+  if (!attrs.name) {
+    throw new Error('Organization name not found in API response');
+  }
+  
+  // Derive slug from organization name (lowercase, remove special chars)
+  const orgSlug = attrs.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+  
   const orgInfo = {
     orgId: org.id,
-    orgSlug: org.attributes?.slug || org.id
+    orgSlug: orgSlug
   };
+  
+  console.log('Detected organization:', orgInfo);
   
   // Cache it
   await env.TASKS_KV.put('organization_info', JSON.stringify(orgInfo));

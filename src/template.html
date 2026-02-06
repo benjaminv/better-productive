@@ -120,7 +120,7 @@
         <label class="toggle-switch">
           <input type="checkbox" id="whatsNewCheckbox" onchange="toggleWhatsNew()">
           <span class="toggle-slider"></span>
-          <span class="toggle-label" id="whatsNewLabel">Showing New</span>
+          <span class="toggle-label" id="whatsNewLabel">Only New</span>
         </label>
       </div>
       <div class="sync-progress" id="syncProgress">
@@ -499,7 +499,7 @@
       if (changedTaskIds.size > 0) {
         toggle.style.display = '';
         checkbox.checked = showOnlyNew;
-        label.textContent = showOnlyNew ? 'Showing New' : `New (${changedTaskIds.size})`;
+        label.textContent = showOnlyNew ? 'Only New' : `New (${changedTaskIds.size})`;
       } else {
         toggle.style.display = 'none';
         showOnlyNew = false;

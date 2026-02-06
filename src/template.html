@@ -116,6 +116,10 @@
         Sync
       </button>
       <button class="btn btn-primary" id="copyAllBtn" onclick="copyAllAsMarkdown()" disabled title="Apply filters first"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>Copy List</button>
+      <button class="btn btn-secondary" id="whatsNewBtn" onclick="toggleWhatsNew()" style="display: none;" title="Show only new/updated tasks">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M12 16h.01"/><path d="M12 8v4"/><circle cx="12" cy="12" r="10"/></svg>
+        <span id="whatsNewLabel">What's New</span>
+      </button>
       <div class="sync-progress" id="syncProgress">
         <span id="syncProgressText">Syncing...</span>
         <div class="sync-progress-bar" id="syncProgressBar"></div>
@@ -277,6 +281,10 @@
     // Pagination
     let currentPage = 1;
     const pageSize = 50;
+    
+    // What's New tracking
+    let changedTaskIds = new Set();
+    let showOnlyNew = false;
 
     // Load filters and initial data
     loadFilters();
@@ -331,6 +339,19 @@
         // Store current person ID
         currentPersonId = data.currentPersonId;
         
+        // Store changed task IDs for What's New highlighting
+        if (data.changedTaskIds && data.changedTaskIds.length > 0) {
+          changedTaskIds = new Set(data.changedTaskIds.map(id => String(id)));
+          
+          // Check if we should auto-show changes (from reload after sync)
+          if (localStorage.getItem('autoShowWhatsNew')) {
+            showOnlyNew = true;
+            localStorage.removeItem('autoShowWhatsNew');
+          }
+          
+          updateWhatsNewButton();
+        }
+        
       } catch (err) {
         console.error('Error loading filters:', err);
       }
@@ -365,6 +386,9 @@
       const nextYear = today + (365 * 86400000);
 
       filteredTasks = allTasks.filter(task => {
+        // "What's New" filter
+        if (showOnlyNew && !changedTaskIds.has(String(task.id))) return false;
+
         // Text search
         if (query) {
           const searchText = (task.ticketKey + ' ' + task.title + ' ' + task.status + ' ' + task.assignee + ' ' + task.project).toLowerCase();
@@ -442,16 +466,40 @@
       filterStatus.value = '';
       filterDue.value = '';
       filterMeOnly.checked = false;
+      showOnlyNew = false;
+      updateWhatsNewButton();
       applyFilters();
+    }
+    
+    function toggleWhatsNew() {
+      showOnlyNew = !showOnlyNew;
+      updateWhatsNewButton();
+      applyFilters();
+    }
+    
+    function updateWhatsNewButton() {
+      const btn = document.getElementById('whatsNewBtn');
+      const label = document.getElementById('whatsNewLabel');
+      
+      if (changedTaskIds.size > 0) {
+        btn.style.display = '';
+        label.textContent = showOnlyNew ? `Showing New Only` : `What's New (${changedTaskIds.size})`;
+        btn.classList.toggle('active', showOnlyNew);
+      } else {
+        btn.style.display = 'none';
+        showOnlyNew = false;
+      }
     }
 
     function renderTask(task) {
       const statusClass = getStatusClass(task.status);
       const created = task.createdAt ? formatDate(task.createdAt) : '';
       const updated = task.updatedAt ? formatDate(task.updatedAt) : '';
+      const isNew = changedTaskIds.has(String(task.id));
+      const newClass = isNew ? ' task-card-new' : '';
       
       return `
-        <div class="task-card">
+        <div class="task-card${newClass}">
           <div class="task-header">
             <span class="ticket-key">
               <a href="/browse/${task.ticketKey}" title="Open in Productive">${task.ticketKey}</a>
@@ -566,7 +614,13 @@
           // Set cooldown
           setSyncCooldown();
           
-          syncProgressText.innerHTML = checkIconSvg + ' Synced ' + data.taskCount + ' tasks';
+          let message = 'Synced ' + data.taskCount + ' tasks';
+          if (data.changedCount > 0) {
+            message += ` (${data.changedCount} changes)`;
+            localStorage.setItem('autoShowWhatsNew', 'true');
+          }
+          
+          syncProgressText.innerHTML = checkIconSvg + ' ' + message;
           setTimeout(() => location.reload(), 1000);
         }
         

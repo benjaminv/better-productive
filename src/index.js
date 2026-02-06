@@ -850,6 +850,32 @@ async function updateTaskDatabase(env, onProgress = null) {
   const assignedCount = allTasks.filter(t => t.assigneeId === personId && !t._deleted).length;
   await env.TASKS_KV.put('assigned_count', assignedCount.toString());
   
+  // Detect new and updated tasks
+  const existingUpdatedAtMap = new Map(existingTasks.map(t => [t.id, t.updatedAt]));
+  const changedTaskIds = [];
+  const newTaskIds = [];
+  const updatedTaskIds = [];
+  
+  for (const task of allTasks) {
+    if (task._deleted) continue; // Skip deleted tasks
+    
+    const existingUpdatedAt = existingUpdatedAtMap.get(task.id);
+    if (!existingUpdatedAt) {
+      // New task (not in previous sync)
+      newTaskIds.push(task.id);
+      changedTaskIds.push(task.id);
+    } else if (existingUpdatedAt !== task.updatedAt) {
+      // Updated task (updatedAt changed)
+      updatedTaskIds.push(task.id);
+      changedTaskIds.push(task.id);
+    }
+  }
+  
+  // Store changed task IDs in KV
+  await env.TASKS_KV.put('changed_task_ids', JSON.stringify(changedTaskIds));
+  await env.TASKS_KV.put('new_task_ids', JSON.stringify(newTaskIds));
+  await env.TASKS_KV.put('updated_task_ids', JSON.stringify(updatedTaskIds));
+  
   // Store filter options for the UI
   await env.TASKS_KV.put('filter_statuses', JSON.stringify([...allStatuses].sort()));
   await env.TASKS_KV.put('filter_assignees', JSON.stringify(
@@ -876,7 +902,10 @@ async function updateTaskDatabase(env, onProgress = null) {
     activeCount,
     deletedCount,
     projectCount: allProjects.size,
-    prefixes: prefixMap
+    prefixes: prefixMap,
+    changedCount: changedTaskIds.length,
+    newCount: newTaskIds.length,
+    updatedCount: updatedTaskIds.length
   };
 }
 
@@ -1045,18 +1074,20 @@ async function handlePrefixes(env) {
 }
 
 async function handleFilters(env) {
-  const [projectsJson, statusesJson, assigneesJson, currentPersonId] = await Promise.all([
+  const [projectsJson, statusesJson, assigneesJson, currentPersonId, changedIdsJson] = await Promise.all([
     env.TASKS_KV.get('filter_projects'),
     env.TASKS_KV.get('filter_statuses'),
     env.TASKS_KV.get('filter_assignees'),
-    env.TASKS_KV.get('current_person_id')
+    env.TASKS_KV.get('current_person_id'),
+    env.TASKS_KV.get('changed_task_ids')
   ]);
 
   return new Response(JSON.stringify({
     projects: JSON.parse(projectsJson || '[]'),
     statuses: JSON.parse(statusesJson || '[]'),
     assignees: JSON.parse(assigneesJson || '[]'),
-    currentPersonId: currentPersonId || null
+    currentPersonId: currentPersonId || null,
+    changedTaskIds: JSON.parse(changedIdsJson || '[]')
   }), { headers: corsHeaders() });
 }
 
@@ -1164,7 +1195,10 @@ async function handleManualUpdate(request, env) {
           type: 'complete',
           success: true,
           taskCount: result.taskCount,
-          assignedCount: result.assignedCount
+          assignedCount: result.assignedCount,
+          changedCount: result.changedCount,
+          newCount: result.newCount,
+          updatedCount: result.updatedCount
         });
         
       } catch (error) {

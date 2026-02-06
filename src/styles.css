@@ -183,6 +183,11 @@ h1 {
 
 .task-card:hover { border-color: var(--accent); }
 
+.task-card-new {
+  border-left: 3px solid var(--accent);
+  background: linear-gradient(90deg, rgba(99, 102, 241, 0.08) 0%, transparent 30%);
+}
+
 .task-header {
   display: flex;
   align-items: flex-start;

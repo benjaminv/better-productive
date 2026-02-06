@@ -1,0 +1,48 @@
+# =============================================================================
+# Local Development Environment Variables
+# =============================================================================
+# Copy this file to .dev.vars and fill in your values.
+# This file is loaded automatically by `wrangler dev`.
+#
+# IMPORTANT: Never commit .dev.vars to version control!
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# OPTION A: Use Environment Variables (Recommended for security)
+# -----------------------------------------------------------------------------
+# Set these to use hardcoded credentials. These take priority over KV storage.
+# The Settings UI will show "Managed via environment variable" when these are set.
+
+PRODUCTIVE_API_TOKEN=your_productive_api_token_here
+APP_PIN=1234
+
+# -----------------------------------------------------------------------------
+# OPTION B: Use Settings UI + KV Storage
+# -----------------------------------------------------------------------------
+# Comment out the variables above to use the web-based Settings UI instead.
+# On first visit, you'll be prompted to enter your credentials via the setup page.
+# Credentials are stored in Cloudflare KV (local SQLite during development).
+#
+# To use this option, comment out the lines above:
+# # PRODUCTIVE_API_TOKEN=your_token_here
+# # APP_PIN=1234
+
+# =============================================================================
+# Priority Order (when deployed)
+# =============================================================================
+# 1. Environment Variables (Cloudflare Secrets) - highest priority
+# 2. KV Storage (from Settings UI) - used if env vars not set
+# 3. Setup page - shown if neither is configured
+#
+# This means you can set env vars to "lock" credentials and prevent 
+# users from changing them via the Settings UI.
+# =============================================================================
+
+# =============================================================================
+# Getting Your API Token
+# =============================================================================
+# 1. Log into Productive.io
+# 2. Go to Settings → API → Personal Access Tokens
+# 3. Create a new token with read access
+# 4. Copy the token value here
+# =============================================================================

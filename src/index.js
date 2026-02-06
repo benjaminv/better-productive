@@ -234,10 +234,11 @@ export default {
             },
             { 
               name: 'app_pin', 
-              label: 'App PIN (Optional)', 
+              label: 'App PIN', 
               type: 'password', 
               placeholder: '4-8 digit PIN',
               hint: 'Protect your dashboard with a PIN',
+              required: true,
               autocomplete: 'new-password'
             }
           ],
@@ -340,6 +341,8 @@ export default {
           return handlePrefixes(env);
         case '/api/filters':
           return handleFilters(env);
+        case '/api/settings':
+          return handleSettings(request, env);
         case '/update':
           return handleManualUpdate(request, env);
         default:
@@ -363,16 +366,18 @@ async function handleSetupPost(request, env, url) {
     const apiToken = formData.get('api_token')?.trim();
     const appPin = formData.get('app_pin')?.trim();
     
-    if (!apiToken) {
+    // Validate both fields are provided
+    if (!apiToken || !appPin) {
+      const missingField = !apiToken ? 'API Token is required.' : 'PIN is required.';
       return renderAuthPage({
         title: 'Welcome! 👋',
         subtitle: 'Let\'s set up your Better Productive.io dashboard.',
         fields: [
           { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
-          { name: 'app_pin', label: 'App PIN (Optional)', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', autocomplete: 'new-password' }
+          { name: 'app_pin', label: 'App PIN', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', required: true, autocomplete: 'new-password' }
         ],
         submitText: 'Complete Setup',
-        error: 'API Token is required.'
+        error: missingField
       });
     }
     
@@ -390,37 +395,34 @@ async function handleSetupPost(request, env, url) {
         subtitle: 'Let\'s set up your Better Productive.io dashboard.',
         fields: [
           { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
-          { name: 'app_pin', label: 'App PIN (Optional)', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', autocomplete: 'new-password' }
+          { name: 'app_pin', label: 'App PIN', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', required: true, autocomplete: 'new-password' }
         ],
         submitText: 'Complete Setup',
         error: 'Invalid API Token. Please check and try again.'
       });
     }
     
-    // Store configuration in KV
-    await env.TASKS_KV.put('config_api_token', apiToken);
-    
-    if (appPin) {
-      // Validate PIN format (4-8 digits)
-      if (!/^\d{4,8}$/.test(appPin)) {
-        return renderAuthPage({
-          title: 'Welcome! 👋',
-          subtitle: 'Let\'s set up your Better Productive.io dashboard.',
-          fields: [
-            { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
-            { name: 'app_pin', label: 'App PIN (Optional)', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', autocomplete: 'new-password' }
-          ],
-          submitText: 'Complete Setup',
-          error: 'PIN must be 4-8 digits.'
-        });
-      }
-      const hashedPin = await hashPin(appPin);
-      await env.TASKS_KV.put('config_app_pin', hashedPin);
+    // Validate PIN format (4-8 digits)
+    if (!/^\d{4,8}$/.test(appPin)) {
+      return renderAuthPage({
+        title: 'Welcome! 👋',
+        subtitle: 'Let\'s set up your Better Productive.io dashboard.',
+        fields: [
+          { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
+          { name: 'app_pin', label: 'App PIN', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', required: true, autocomplete: 'new-password' }
+        ],
+        submitText: 'Complete Setup',
+        error: 'PIN must be 4-8 digits.'
+      });
     }
     
-    // Redirect to login if PIN was set, otherwise to home
-    const redirectUrl = appPin ? '/login' : '/';
-    return Response.redirect(new URL(redirectUrl, url.origin), 302);
+    // Store configuration in KV
+    await env.TASKS_KV.put('config_api_token', apiToken);
+    const hashedPin = await hashPin(appPin);
+    await env.TASKS_KV.put('config_app_pin', hashedPin);
+    
+    // Redirect to login (PIN is always set now)
+    return Response.redirect(new URL('/login', url.origin), 302);
     
   } catch (error) {
     console.error('Setup error:', error);
@@ -429,7 +431,7 @@ async function handleSetupPost(request, env, url) {
       subtitle: 'Let\'s set up your Better Productive.io dashboard.',
       fields: [
         { name: 'api_token', label: 'Productive API Token', type: 'password', placeholder: 'Enter your API token', hint: 'Get this from Productive.io → Settings → API', required: true, autocomplete: 'off' },
-        { name: 'app_pin', label: 'App PIN (Optional)', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', autocomplete: 'new-password' }
+        { name: 'app_pin', label: 'App PIN', type: 'password', placeholder: '4-8 digit PIN', hint: 'Protect your dashboard with a PIN', required: true, autocomplete: 'new-password' }
       ],
       submitText: 'Complete Setup',
       error: `Setup failed: ${error.message}`
@@ -1058,6 +1060,77 @@ async function handleFilters(env) {
   }), { headers: corsHeaders() });
 }
 
+async function handleSettings(request, env) {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: corsHeaders()
+    });
+  }
+  
+  try {
+    const body = await request.json();
+    const { action, value } = body;
+    
+    if (!action || !value) {
+      return new Response(JSON.stringify({ error: 'Missing action or value' }), {
+        status: 400,
+        headers: corsHeaders()
+      });
+    }
+    
+    switch (action) {
+      case 'title':
+        await env.TASKS_KV.put('config_page_title', value.trim());
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders() });
+        
+      case 'pin':
+        if (!/^\d{4,8}$/.test(value)) {
+          return new Response(JSON.stringify({ error: 'PIN must be 4-8 digits' }), {
+            status: 400,
+            headers: corsHeaders()
+          });
+        }
+        const hashedPin = await hashPin(value);
+        await env.TASKS_KV.put('config_app_pin', hashedPin);
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders() });
+        
+      case 'token':
+        // Validate token by making a test request
+        const testResponse = await fetch('https://api.productive.io/api/v2/organizations', {
+          headers: {
+            'X-Auth-Token': value,
+            'Content-Type': 'application/vnd.api+json'
+          }
+        });
+        
+        if (!testResponse.ok) {
+          return new Response(JSON.stringify({ error: 'Invalid API token' }), {
+            status: 400,
+            headers: corsHeaders()
+          });
+        }
+        
+        await env.TASKS_KV.put('config_api_token', value);
+        // Clear cached org info so it's re-fetched with new token
+        await env.TASKS_KV.delete('organization_info');
+        await env.TASKS_KV.delete('current_person_id');
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders() });
+        
+      default:
+        return new Response(JSON.stringify({ error: 'Unknown action' }), {
+          status: 400,
+          headers: corsHeaders()
+        });
+    }
+  } catch (error) {
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: corsHeaders()
+    });
+  }
+}
+
 async function handleManualUpdate(request, env) {
   // Use Server-Sent Events to stream progress
   const encoder = new TextEncoder();
@@ -1121,11 +1194,12 @@ async function handleManualUpdate(request, env) {
 // =============================================================================
 
 async function renderSearchPage(env) {
-  const [lastUpdated, taskCount, assignedCount, config] = await Promise.all([
+  const [lastUpdated, taskCount, assignedCount, config, pageTitle] = await Promise.all([
     env.TASKS_KV.get('last_updated'),
     env.TASKS_KV.get('task_count'),
     env.TASKS_KV.get('assigned_count'),
-    getConfig(env)
+    getConfig(env),
+    env.TASKS_KV.get('config_page_title')
   ]);
 
   const lastUpdatedDisplay = lastUpdated
@@ -1134,15 +1208,62 @@ async function renderSearchPage(env) {
     
   const statsText = `${taskCount || 0} tasks (${assignedCount || 0} assigned)`;
   
-  // Show logout button only if PIN protection is enabled
-  const logoutButton = config.isProtected 
-    ? '<a href="/logout" class="icon-btn" title="Logout"><svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/></svg></a>'
+  // Default page title
+  const displayTitle = pageTitle || 'Better Productive.io';
+  
+  // Detect if PIN/token are from env vars
+  const pinFromEnv = !!env.APP_PIN;
+  const tokenFromEnv = !!env.PRODUCTIVE_API_TOKEN;
+  
+  // Generate PIN section content
+  const pinSection = pinFromEnv
+    ? `<div class="form-group">
+        <label>PIN</label>
+        <p class="hint" style="margin-top: 0;">Managed via environment variable. To update:</p>
+        <code class="hint" style="display: block; background: var(--bg-card); padding: 0.5rem; border-radius: 6px; margin-top: 0.25rem; font-size: 0.75rem;">wrangler secret put APP_PIN</code>
+        <p class="hint">Or update in Cloudflare Dashboard → Workers → Settings → Variables</p>
+      </div>`
+    : `<div class="form-group">
+        <label for="settingsPin">Update PIN</label>
+        <div class="modal-row">
+          <input type="password" id="settingsPin" class="form-input" placeholder="New 4-8 digit PIN" autocomplete="new-password">
+          <button class="btn btn-save" onclick="savePin()">Save</button>
+        </div>
+        <p class="hint">Leave empty to keep current PIN</p>
+      </div>`;
+  
+  // Generate token section content
+  const tokenSection = tokenFromEnv
+    ? `<div class="form-group">
+        <label>API Token</label>
+        <p class="hint" style="margin-top: 0;">Managed via environment variable. To update:</p>
+        <code class="hint" style="display: block; background: var(--bg-card); padding: 0.5rem; border-radius: 6px; margin-top: 0.25rem; font-size: 0.75rem;">wrangler secret put PRODUCTIVE_API_TOKEN</code>
+        <p class="hint">Or update in Cloudflare Dashboard → Workers → Settings → Variables</p>
+      </div>`
+    : `<div class="form-group">
+        <label for="settingsToken">Update API Token</label>
+        <div class="modal-row">
+          <input type="password" id="settingsToken" class="form-input" placeholder="New Productive API token" autocomplete="off">
+          <button class="btn btn-save" onclick="saveToken()">Save</button>
+        </div>
+        <p class="hint">Get from Productive.io → Settings → API</p>
+      </div>`;
+  
+  // Show logout section only if PIN protection is enabled
+  const logoutSection = config.isProtected 
+    ? `<div class="modal-section">
+        <h3>Session</h3>
+        <a href="/logout" class="btn btn-danger btn-full">Logout</a>
+      </div>`
     : '';
 
   // Replace placeholders in template
   return htmlTemplate
-    .replace('{{STYLES}}', styles)
-    .replace('{{STATS_TEXT}}', statsText)
-    .replace('{{LAST_UPDATED}}', lastUpdatedDisplay)
-    .replace('{{LOGOUT_BUTTON}}', logoutButton);
+    .replace(/\{\{STYLES\}\}/g, styles)
+    .replace(/\{\{PAGE_TITLE\}\}/g, displayTitle)
+    .replace(/\{\{STATS_TEXT\}\}/g, statsText)
+    .replace(/\{\{LAST_UPDATED\}\}/g, lastUpdatedDisplay)
+    .replace(/\{\{PIN_SECTION\}\}/g, pinSection)
+    .replace(/\{\{TOKEN_SECTION\}\}/g, tokenSection)
+    .replace(/\{\{LOGOUT_SECTION\}\}/g, logoutSection);
 }

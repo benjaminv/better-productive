@@ -12,8 +12,9 @@ A fast, searchable task dashboard for [Productive.io](https://productive.io) bui
 - **🎯 Smart Filtering** - Filter by project, status, due date, and assignee
 - **📋 Markdown Export** - Copy filtered tasks as markdown checklists
 - **🌙 Dark/Light Mode** - Toggle between themes
-- **⚡ Auto-Sync** - Automatically syncs tasks during business hours
-- **🔐 Secure** - API tokens stored as Cloudflare Secrets
+- **⚡ Real-time Sync** - SSE-powered progress with auto-sync during business hours
+- **🔐 Secure** - PIN protection with credentials stored as Cloudflare Secrets
+- **⚙️ Settings UI** - Update credentials and customize via web interface
 
 ## 🚀 Quick Start
 
@@ -27,14 +28,15 @@ A fast, searchable task dashboard for [Productive.io](https://productive.io) bui
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/yourusername/productiver.git
-   cd productiver
+   git clone git@github.com:benjaminv/better-productive.git
+   cd better-productive
    npm install
    ```
 
-2. **Copy the config template**
+2. **Copy the config templates**
    ```bash
    cp wrangler.toml.example wrangler.toml
+   cp .dev.vars.example .dev.vars
    ```
 
 3. **Create a KV namespace**
@@ -48,26 +50,21 @@ A fast, searchable task dashboard for [Productive.io](https://productive.io) bui
    id = "your-namespace-id-here"
    ```
 
-4. **Set your API token as a secret**
-   ```bash
-   wrangler secret put PRODUCTIVE_API_TOKEN
-   ```
-   Get your API token from: Productive.io → Settings → API → Personal Access Tokens
+4. **Choose your credential method** (see [Deployment Options](#-deployment-options) below)
 
 5. **Deploy!**
    ```bash
    npm run deploy
    ```
 
-That's it! Your org ID, slug, and person ID are auto-detected from the API.
-
 ## 🛠️ Development
 
 ### Local Development
 
-1. Create a `.dev.vars` file for local secrets:
+1. Edit `.dev.vars` with your credentials:
    ```bash
-   echo "PRODUCTIVE_API_TOKEN=your_token_here" > .dev.vars
+   PRODUCTIVE_API_TOKEN=your_token_here
+   APP_PIN=1234
    ```
 
 2. Start the dev server:
@@ -77,29 +74,85 @@ That's it! Your org ID, slug, and person ID are auto-detected from the API.
 
 3. Open http://localhost:8787
 
+> **Note**: Local development uses a SQLite emulation of KV, not your production Cloudflare KV. Use `wrangler dev --remote` to connect to production KV.
+
 ### Project Structure
 
 ```
 src/
-├── index.js          # Worker logic, API routes
-├── template.html     # HTML + JavaScript
+├── index.js          # Worker logic, API routes, SSE streaming
+├── template.html     # HTML + JavaScript (Settings modal, sync UI)
+├── auth.html         # Login/setup pages
 ├── styles.css        # CSS styles
 └── assets/           # Logo and favicons
-    ├── logo.svg
-    ├── favicon.ico
-    └── ...
 ```
+
+## 📦 Deployment Options
+
+You have **two options** for managing credentials:
+
+### Option A: Cloudflare Secrets (Recommended)
+
+Best for: Security-conscious deployments, admin-controlled credentials
+
+```bash
+# Set your API token
+wrangler secret put PRODUCTIVE_API_TOKEN
+
+# Set your PIN (4-8 digits)
+wrangler secret put APP_PIN
+```
+
+- ✅ Credentials are encrypted and hidden
+- ✅ Cannot be changed via Settings UI
+- ✅ No data visible in KV storage
+
+### Option B: Settings UI + KV Storage
+
+Best for: Easy setup, no CLI required, self-managed deployments
+
+1. Deploy without setting secrets
+2. Visit your Worker URL
+3. Complete the setup wizard (API token + PIN required)
+4. Credentials are stored in Cloudflare KV
+
+- ✅ No CLI required
+- ✅ Users can update via Settings UI
+- ⚠️ Data stored in KV (readable via dashboard)
+
+### Credential Priority
+
+When both options are configured, **Secrets take priority**:
+
+| Secret Set? | KV Set? | Which is Used? |
+|:-----------:|:-------:|:--------------:|
+| ✅ | ✅ | **Secret** (KV ignored) |
+| ✅ | ❌ | Secret |
+| ❌ | ✅ | KV |
+| ❌ | ❌ | Setup wizard shown |
 
 ## ⚙️ Configuration
 
-All environment variables are **optional** - they're auto-detected from the API if not set:
+### Environment Variables
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `PRODUCTIVE_API_TOKEN` | **Required.** Your Productive.io API token | - |
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `PRODUCTIVE_API_TOKEN` | Your Productive.io API token | Yes* |
+| `APP_PIN` | 4-8 digit PIN for dashboard access | Yes* |
 | `PRODUCTIVE_ORG_ID` | Organization ID | Auto-detected |
 | `PRODUCTIVE_ORG_SLUG` | Organization slug for URLs | Auto-detected |
 | `PRODUCTIVE_PERSON_ID` | Your person ID for "Assigned to me" | Auto-detected |
+
+*Can be set via Secrets OR Settings UI
+
+### Settings UI
+
+Click the ⚙️ gear icon to access:
+
+- **Page Title** - Customize the dashboard name
+- **PIN** - Update access PIN (if not using Secrets)
+- **API Token** - Update Productive.io token (if not using Secrets)
+- **Logout** - End current session
 
 ### Cron Schedule
 
@@ -121,12 +174,17 @@ crons = [
 | `GET /browse/PRIM-242` | Redirect to Productive.io task |
 | `GET /api/search?q=text` | Search tasks (JSON) |
 | `GET /api/filters` | Get available filters |
-| `GET /update` | Trigger manual sync |
+| `GET /api/settings` | Update settings (POST) |
+| `GET /update` | Trigger manual sync (SSE stream) |
+| `GET /login` | Login page |
+| `GET /logout` | End session |
 
 ## 🔒 Security
 
-- API token is stored as a [Cloudflare Secret](https://developers.cloudflare.com/workers/configuration/secrets/)
-- Never commit `.dev.vars` (it's in `.gitignore`)
+- **Secrets** - API token and PIN can be stored as [Cloudflare Secrets](https://developers.cloudflare.com/workers/configuration/secrets/)
+- **PIN Hashing** - PINs stored in KV are hashed with SHA-256
+- **Session Cookies** - Secure, HTTP-only cookies for authentication
+- **Never commit** `.dev.vars` (it's in `.gitignore`)
 - For additional access control, consider [Cloudflare Access](https://developers.cloudflare.com/cloudflare-one/applications/)
 
 ## 📝 License
@@ -137,3 +195,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 - Built with [Cloudflare Workers](https://workers.cloudflare.com/)
 - Task data from [Productive.io API](https://developer.productive.io/)
+

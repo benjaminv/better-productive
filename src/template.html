@@ -362,53 +362,74 @@
       syncProgress.classList.add('active');
       syncProgressText.textContent = 'Connecting...';
       
-      // Create progress segments (we'll use 8 segments)
-      const totalSegments = 8;
-      syncProgressBar.innerHTML = Array(totalSegments).fill(0)
-        .map(() => '<div class="sync-progress-segment"></div>').join('');
-      const segments = syncProgressBar.querySelectorAll('.sync-progress-segment');
+      // Create progress segments (dynamic based on pages fetched)
+      syncProgressBar.innerHTML = '';
+      let segments = [];
+      let lastPhase = '';
       
-      // Animate progress while waiting
-      let currentSegment = 0;
-      const progressInterval = setInterval(() => {
-        segments.forEach((s, i) => {
-          s.classList.remove('current', 'filled');
-          if (i < currentSegment) s.classList.add('filled');
-          if (i === currentSegment) s.classList.add('current');
-        });
-        if (currentSegment < totalSegments - 1) {
-          currentSegment++;
-          // Keep showing "Fetching tasks..." for most of the progress
-          if (currentSegment === 1) syncProgressText.textContent = 'Fetching tasks...';
-          if (currentSegment === totalSegments - 1) syncProgressText.textContent = 'Almost done...';
-        }
-      }, 600);
+      // Use EventSource for real-time progress
+      const eventSource = new EventSource('/update');
       
-      try {
-        const res = await fetch('/update');
-        const data = await res.json();
-        clearInterval(progressInterval);
+      eventSource.onmessage = (event) => {
+        const data = JSON.parse(event.data);
         
-        if (data.success) {
-          // Fill all segments
-          segments.forEach(s => { s.classList.remove('current'); s.classList.add('filled'); });
+        if (data.type === 'connecting') {
+          syncProgressText.textContent = data.message;
+        }
+        
+        if (data.type === 'progress') {
+          // Add a new segment for each page fetched
+          const segment = document.createElement('div');
+          segment.className = 'sync-progress-segment filled';
+          syncProgressBar.appendChild(segment);
+          segments.push(segment);
+          
+          // Update text with current phase and page
+          const phaseLabel = data.phase === 'subscribed' ? 'subscribed' : 'assigned';
+          syncProgressText.textContent = `Fetching ${phaseLabel} (page ${data.page})...`;
+          
+          // Add pulsing indicator if more pages coming
+          if (data.hasMore) {
+            const pulse = syncProgressBar.querySelector('.pulse');
+            if (!pulse) {
+              const pulseEl = document.createElement('div');
+              pulseEl.className = 'sync-progress-segment current pulse';
+              syncProgressBar.appendChild(pulseEl);
+            }
+          } else {
+            const pulse = syncProgressBar.querySelector('.pulse');
+            if (pulse) pulse.remove();
+          }
+        }
+        
+        if (data.type === 'complete') {
+          eventSource.close();
+          // Remove any pulse indicator
+          const pulse = syncProgressBar.querySelector('.pulse');
+          if (pulse) pulse.remove();
+          
           syncProgressText.innerHTML = checkIconSvg + ' Synced ' + data.taskCount + ' tasks';
           setTimeout(() => location.reload(), 1000);
-        } else {
+        }
+        
+        if (data.type === 'error') {
+          eventSource.close();
           syncProgressText.innerHTML = xIconSvg + ' ' + data.error;
           setTimeout(() => {
             syncProgress.classList.remove('active');
             syncBtn.style.display = '';
           }, 3000);
         }
-      } catch (e) {
-        clearInterval(progressInterval);
-        syncProgressText.innerHTML = xIconSvg + ' ' + e.message;
+      };
+      
+      eventSource.onerror = () => {
+        eventSource.close();
+        syncProgressText.innerHTML = xIconSvg + ' Connection error';
         setTimeout(() => {
           syncProgress.classList.remove('active');
           syncBtn.style.display = '';
         }, 3000);
-      }
+      };
     }
 
     function updateCopyButtonState() {

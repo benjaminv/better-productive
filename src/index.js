@@ -685,7 +685,7 @@ async function getPersonId(env, orgId) {
   return personId;
 }
 
-async function updateTaskDatabase(env) {
+async function updateTaskDatabase(env, onProgress = null) {
   const config = await getConfig(env);
   const apiToken = config.apiToken;
   
@@ -715,9 +715,12 @@ async function updateTaskDatabase(env) {
   let allProjects = new Map();
   let allStatuses = new Set();
   let allAssignees = new Map();
+  
+  // Track total pages fetched for progress
+  let totalPagesFetched = 0;
 
   // Helper to fetch paginated tasks with a specific filter
-  async function fetchTasksWithFilter(filterParam, filterValue) {
+  async function fetchTasksWithFilter(filterParam, filterValue, filterLabel) {
     let page = 1;
     let hasMore = true;
     
@@ -786,14 +789,27 @@ async function updateTaskDatabase(env) {
       }
 
       hasMore = !!data.links?.next;
+      totalPagesFetched++;
+      
+      // Report progress if callback provided
+      if (onProgress) {
+        onProgress({
+          phase: filterLabel,
+          page: page,
+          hasMore: hasMore,
+          tasksFound: taskMap.size,
+          totalPages: totalPagesFetched
+        });
+      }
+      
       page++;
     }
   }
 
   // Fetch BOTH subscribed AND assigned tasks
   if (personId) {
-    await fetchTasksWithFilter('subscriber_id', personId);
-    await fetchTasksWithFilter('assignee_id', personId);
+    await fetchTasksWithFilter('subscriber_id', personId, 'subscribed');
+    await fetchTasksWithFilter('assignee_id', personId, 'assigned');
   }
 
   // Preserve tasks from previous sync that are no longer in API (mark as deleted)
@@ -1043,23 +1059,61 @@ async function handleFilters(env) {
 }
 
 async function handleManualUpdate(request, env) {
-  // Allow both GET and POST for manual updates
-  try {
-    const result = await updateTaskDatabase(env);
-    return new Response(JSON.stringify({
-      success: true,
-      message: 'Database updated successfully',
-      ...result
-    }), { headers: corsHeaders() });
-  } catch (error) {
-    return new Response(JSON.stringify({
-      success: false,
-      error: error.message
-    }), {
-      status: 500,
-      headers: corsHeaders()
-    });
-  }
+  // Use Server-Sent Events to stream progress
+  const encoder = new TextEncoder();
+  
+  const stream = new ReadableStream({
+    async start(controller) {
+      const sendEvent = (data) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      };
+      
+      try {
+        // Send initial connecting event
+        sendEvent({ type: 'connecting', message: 'Connecting...' });
+        
+        // Progress callback for updateTaskDatabase
+        const onProgress = (progress) => {
+          sendEvent({
+            type: 'progress',
+            phase: progress.phase,
+            page: progress.page,
+            hasMore: progress.hasMore,
+            tasksFound: progress.tasksFound,
+            totalPages: progress.totalPages
+          });
+        };
+        
+        const result = await updateTaskDatabase(env, onProgress);
+        
+        // Send completion event
+        sendEvent({
+          type: 'complete',
+          success: true,
+          taskCount: result.taskCount,
+          assignedCount: result.assignedCount
+        });
+        
+      } catch (error) {
+        sendEvent({
+          type: 'error',
+          success: false,
+          error: error.message
+        });
+      } finally {
+        controller.close();
+      }
+    }
+  });
+  
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*'
+    }
+  });
 }
 
 // =============================================================================

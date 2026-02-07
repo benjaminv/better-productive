@@ -863,9 +863,8 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
   // For What's New tracking, we compare against the manual sync baseline (not last sync)
   // This ensures cron syncs accumulate changes until next manual sync
   const baselineJson = await env.TASKS_KV.get('manual_sync_baseline');
-  const baselineTasks = baselineJson ? JSON.parse(baselineJson) : [];
-  // Use String() for consistent key types (API might return number or string)
-  const baselineUpdatedAtMap = new Map(baselineTasks.map(t => [String(t.id), t.updatedAt]));
+  // Baseline is a simple { taskId: updatedAt } map for efficiency
+  const baselineUpdatedAtMap = new Map(Object.entries(baselineJson ? JSON.parse(baselineJson) : {}));
   
   // Get existing accumulated changes (for cron syncs to merge with)
   const existingChangedJson = await env.TASKS_KV.get('changed_task_ids');
@@ -896,7 +895,12 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
   if (isManualSync) {
     // Manual sync: reset to fresh changes and update baseline
     finalChangedIds = changedTaskIds;
-    await env.TASKS_KV.put('manual_sync_baseline', JSON.stringify(allTasks));
+    // Store only id->updatedAt map (not full tasks) for efficiency
+    const baselineMap = {};
+    for (const task of allTasks) {
+      if (!task._deleted) baselineMap[task.id] = task.updatedAt;
+    }
+    await env.TASKS_KV.put('manual_sync_baseline', JSON.stringify(baselineMap));
   } else {
     // Cron sync: accumulate changes (union of existing + new)
     const mergedSet = new Set([...existingChangedIds, ...changedTaskIds]);

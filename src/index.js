@@ -160,7 +160,7 @@ export default {
   async scheduled(event, env, ctx) {
     console.log('Cron triggered: Updating task database...');
     try {
-      const result = await updateTaskDatabase(env, null, false); // isManualSync = false
+      const result = await updateTaskDatabase(env, null, null, false, null); // isManualSync = false
       console.log(`Sync complete: ${result.taskCount} tasks, ${result.projectCount} projects`);
     } catch (error) {
       console.error('Sync failed:', error);
@@ -687,7 +687,7 @@ async function getPersonId(env, orgId) {
   return personId;
 }
 
-async function updateTaskDatabase(env, onProgress = null, isManualSync = true) {
+async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isManualSync = true, abortSignal = null) {
   const config = await getConfig(env);
   const apiToken = config.apiToken;
   
@@ -727,6 +727,7 @@ async function updateTaskDatabase(env, onProgress = null, isManualSync = true) {
     let hasMore = true;
     
     while (hasMore && page <= 25) {  // 25 pages per filter type = 50 total max
+      if (abortSignal?.aborted) throw new DOMException('Sync cancelled', 'AbortError');
       const url = `${baseUrl}?page[number]=${page}&page[size]=200` +
         `&include=assignee,project,workflow_status` +
         `&filter[${filterParam}]=${filterValue}` +
@@ -828,6 +829,14 @@ async function updateTaskDatabase(env, onProgress = null, isManualSync = true) {
   }
 
   const allTasks = [...taskMap.values()].sort((a, b) => b.id - a.id);
+
+  // Check for cancellation before committing to KV writes
+  if (abortSignal?.aborted) throw new DOMException('Sync cancelled', 'AbortError');
+
+  // Signal processing phase (all pages fetched, now saving)
+  if (sendEvent) {
+    sendEvent({ type: 'processing' });
+  }
 
   // Generate prefixes for all projects
   const { prefixMap, prefixIndex } = generateAllPrefixes([...allProjects.values()]);
@@ -1188,10 +1197,12 @@ async function handleSettings(request, env) {
 async function handleManualUpdate(request, env) {
   // Use Server-Sent Events to stream progress
   const encoder = new TextEncoder();
+  const abortSignal = request.signal;
   
   const stream = new ReadableStream({
     async start(controller) {
       const sendEvent = (data) => {
+        if (abortSignal.aborted) throw new DOMException('Client disconnected', 'AbortError');
         controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
       };
       
@@ -1211,7 +1222,7 @@ async function handleManualUpdate(request, env) {
           });
         };
         
-        const result = await updateTaskDatabase(env, onProgress);
+        const result = await updateTaskDatabase(env, onProgress, sendEvent, true, abortSignal);
         
         // Send completion event
         sendEvent({
@@ -1225,11 +1236,15 @@ async function handleManualUpdate(request, env) {
         });
         
       } catch (error) {
-        sendEvent({
-          type: 'error',
-          success: false,
-          error: error.message
-        });
+        if (error.name === 'AbortError') {
+          console.log('Sync cancelled by client');
+        } else {
+          sendEvent({
+            type: 'error',
+            success: false,
+            error: error.message
+          });
+        }
       } finally {
         controller.close();
       }

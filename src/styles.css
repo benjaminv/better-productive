@@ -617,9 +617,22 @@ h1 {
   animation: pulse 0.8s ease-in-out infinite;
 }
 
+.sync-progress-bar.processing .sync-progress-segment {
+  animation: processing-wave 1.2s ease-in-out infinite;
+}
+
+.sync-progress-bar.processing .sync-progress-segment:nth-child(even) {
+  animation-delay: 0.15s;
+}
+
 @keyframes pulse {
   0%, 100% { opacity: 1; }
   50% { opacity: 0.4; }
+}
+
+@keyframes processing-wave {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
 }
 
 /* ===== Modal Styles ===== */

@@ -20,9 +20,9 @@ A fast, searchable task dashboard for [Productive.io](https://productive.io) bui
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18+)
+- [Node.js](https://nodejs.org/) (v22+)
 - [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) (`npm install -g wrangler`)
-- A [Productive.io](https://productive.io) account with API access
+- A [Productive.io](https://productive.io) account with API access (check Account avatar > Settings > API integrations)
 
 ### Setup
 

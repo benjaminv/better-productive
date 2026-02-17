@@ -5,6 +5,9 @@ A fast, searchable task dashboard for [Productive.io](https://productive.io) bui
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Cloudflare Workers](https://img.shields.io/badge/Cloudflare-Workers-orange)
 
+![alt text](image.png)
+![alt text](image-1.png)
+
 ## ✨ Features
 
 - **🔍 Fast Search** - Search across all tasks by ticket number, title, status, or assignee

@@ -23,6 +23,7 @@
           <h1>{{PAGE_TITLE}}</h1>
         </div>
         <div class="header-actions">
+          <span class="header-sync" id="headerSync">Synced: {{LAST_UPDATED}}</span>
           <button id="themeToggle" class="icon-btn" title="Toggle theme">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2v2"/><path d="M14.837 16.385a6 6 0 1 1-7.223-7.222c.624-.147.97.66.715 1.248a4 4 0 0 0 5.26 5.259c.589-.255 1.396.09 1.248.715"/><path d="M16 12a4 4 0 0 0-4-4"/><path d="m19 5-1.256 1.256"/><path d="M20 12h2"/>
@@ -69,9 +70,15 @@
       </div>
     </div>
 
+    <!-- Mobile stats row (visible only on mobile) -->
+    <div class="mobile-stats" id="mobileStats">{{STATS_TEXT}} • Synced: {{LAST_UPDATED}}</div>
+
     <div class="search-box">
-      <input type="text" class="search-input" id="searchInput" 
-             placeholder="Search by ticket (PRIM-242), title, status..." autofocus>
+      <div class="search-input-wrapper">
+        <input type="text" class="search-input" id="searchInput" 
+               placeholder="ticket number, title, status..." autofocus>
+        <span class="search-stats" id="searchStats">{{STATS_TEXT}}</span>
+      </div>
     </div>
 
     <div class="filters" id="filtersContainer">
@@ -118,16 +125,25 @@
       <button class="btn btn-primary" id="copyAllBtn" onclick="copyAllAsMarkdown()" disabled title="Apply filters first"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/></svg>Copy List</button>
       <div class="toggle-group" id="whatsNewToggle" style="display: none;">
         <label class="toggle-switch">
+          <span class="toggle-label" id="whatsNewLabel">Only New</span>
           <input type="checkbox" id="whatsNewCheckbox" onchange="toggleWhatsNew()">
           <span class="toggle-slider"></span>
-          <span class="toggle-label" id="whatsNewLabel">Only New</span>
         </label>
       </div>
       <div class="sync-progress" id="syncProgress">
         <span id="syncProgressText">Syncing...</span>
         <div class="sync-progress-bar" id="syncProgressBar"></div>
       </div>
-      <span class="stats" style="margin-left: auto;">{{STATS_TEXT}} • Synced: {{LAST_UPDATED}}</span>
+      <div class="filter-group sort-group">
+        <span class="filter-label">Sort:</span>
+        <select class="filter-select" id="sortSelect">
+          <option value="default">Default</option>
+          <option value="project-asc">Project (A-Z)</option>
+          <option value="due-asc">Due Date (A-Z)</option>
+          <option value="created-desc">Created (Z-A)</option>
+          <option value="updated-desc">Updated (Z-A)</option>
+        </select>
+      </div>
     </div>
 
     <div id="resultCount" class="result-count"></div>
@@ -303,6 +319,7 @@
     const filterStatus = document.getElementById('filterStatus');
     const filterDue = document.getElementById('filterDue');
     const filterMeOnly = document.getElementById('filterMeOnly');
+    const sortSelect = document.getElementById('sortSelect');
     
     let allTasks = [];
     let filteredTasks = [];
@@ -344,6 +361,7 @@
     filterStatus.addEventListener('change', applyFilters);
     filterDue.addEventListener('change', applyFilters);
     filterMeOnly.addEventListener('change', applyFilters);
+    sortSelect.addEventListener('change', applyFilters);
 
     async function loadFilters() {
       try {
@@ -444,6 +462,35 @@
 
         return true;
       });
+      
+      // Apply sorting
+      const sortValue = sortSelect.value;
+      if (sortValue && sortValue !== 'default') {
+        filteredTasks.sort((a, b) => {
+          switch (sortValue) {
+            case 'project-asc':
+              return (a.project || '').localeCompare(b.project || '');
+            case 'due-asc':
+              // Tasks with no due date go to the end
+              if (!a.dueDate && !b.dueDate) return 0;
+              if (!a.dueDate) return 1;
+              if (!b.dueDate) return -1;
+              return new Date(a.dueDate) - new Date(b.dueDate);
+            case 'created-desc':
+              if (!a.createdAt && !b.createdAt) return 0;
+              if (!a.createdAt) return 1;
+              if (!b.createdAt) return -1;
+              return new Date(b.createdAt) - new Date(a.createdAt);
+            case 'updated-desc':
+              if (!a.updatedAt && !b.updatedAt) return 0;
+              if (!a.updatedAt) return 1;
+              if (!b.updatedAt) return -1;
+              return new Date(b.updatedAt) - new Date(a.updatedAt);
+            default:
+              return 0;
+          }
+        });
+      }
       
       currentPage = 1;
       renderTasks();

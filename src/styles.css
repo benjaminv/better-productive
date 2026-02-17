@@ -51,17 +51,56 @@ h1 {
 
 .stats { color: var(--text-secondary); opacity: 0.75; font-size: 0.8rem; }
 
+/* Header sync time */
+.header-sync {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  opacity: 0.7;
+  white-space: nowrap;
+}
+
+/* Mobile stats row */
+.mobile-stats {
+  display: none;
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  opacity: 0.6;
+  margin-bottom: 0.75rem;
+}
+
 .search-box { margin-bottom: 1rem; }
 
 .search-input {
   width: 100%;
   padding: 0.875rem 1.25rem;
   font-size: 1rem;
-  background: var(--bg-secondary);
+  background: linear-gradient(to right, var(--bg-secondary) 40%, transparent 70%);
   border: 1px solid var(--border);
   border-radius: 10px;
   color: var(--text-primary);
   outline: none;
+  position: relative;
+  z-index: 1;
+}
+
+.search-input-wrapper {
+  position: relative;
+  width: 100%;
+  background: var(--bg-secondary);
+  border-radius: 10px;
+}
+
+.search-stats {
+  position: absolute;
+  right: 1rem;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  opacity: 0.5;
+  pointer-events: none;
+  z-index: 0;
+  white-space: nowrap;
 }
 
 .search-input:focus {
@@ -114,6 +153,14 @@ h1 {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  margin-left: auto;
+}
+
+/* Sort dropdown in actions row */
+.sort-group {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
   margin-left: auto;
 }
 
@@ -176,6 +223,8 @@ h1 {
   display: flex;
   align-items: center;
   gap: 0.5rem;
+  flex: 1;
+  justify-content: flex-end;
 }
 
 .toggle-switch {
@@ -331,6 +380,27 @@ h1 {
 
 @media (max-width: 640px) {
   body { padding: 1rem; }
+
+  header {
+    margin-bottom: 0;
+  }
+  
+  /* Show mobile stats row, hide header sync and search stats */
+  .mobile-stats {
+    display: block;
+  }
+  
+  .header-sync {
+    display: none;
+  }
+  
+  .search-stats {
+    display: none;
+  }
+  
+  .search-input {
+    background: var(--bg-secondary);
+  }
   
   /* Filters layout on mobile */
   .filters { 
@@ -365,15 +435,17 @@ h1 {
   .actions {
     flex-wrap: wrap;
     gap: 0.5rem;
+    padding: 0.75rem;
+    background: var(--bg-secondary);
+    border-radius: 10px;
+    border: 1px solid var(--border);
   }
   
-  .actions .stats {
-    order: 10;
+  /* Sort group on mobile - full width in actions row */
+  .sort-group {
     width: 100%;
     margin-left: 0;
-    padding-bottom: 1rem;
-    padding-top: 0.5rem;
-    border-bottom: 1px solid var(--border);
+    order: 10;
   }
   
   /* Header on mobile */
@@ -385,7 +457,6 @@ h1 {
     font-size: 1.25rem;
   }
 }
-
 /* ===== Auth Page Styles ===== */
 .auth-body {
   display: flex;

@@ -2,6 +2,25 @@
 
 All notable changes to Better Productive will be documented in this file.
 
+## [0.5.0] - 2026-02-18
+
+### Added
+- **Exclude Resolved filter** — Checkbox to hide Done/Complete/Cancel/Closed/Unknown tasks (checked by default)
+  - Auto-toggles when selecting resolved statuses in the Status dropdown
+  - Clear button resets to unchecked (show all)
+- **Sort dropdown** — Sort tasks by Project, Due Date, Created, or Updated (moved to actions row)
+- **Resolved status array** — Centralised `RESOLVED_STATUSES` constant for easier maintenance
+- Synced timestamp shown in desktop header and mobile stats row
+- Task count displayed inside search input (gradient transparency)
+
+### Changed
+- Search placeholder updated to "ticket number, title, status..."
+- Filter select dropdowns capped with `max-width` and text overflow
+- Mobile stats row simplified (no background/border)
+- Cancelled tasks now treated as resolved throughout
+
+---
+
 ## [0.4.0] - 2026-02-07
 
 ### Added
@@ -94,6 +113,8 @@ All notable changes to Better Productive will be documented in this file.
 - [x] Sync cooldown rate limiting
 - [x] Scheduled background sync (cron)
 - [x] Preserve deleted/unsubscribed tasks
+- [x] Sort by project, due date, created, updated
+- [x] Exclude Resolved filter (Done/Cancel/Closed/Unknown)
 
 ### Planned
 - [ ] Multi-user support (separate data per API token)

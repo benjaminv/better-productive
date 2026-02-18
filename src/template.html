@@ -84,7 +84,7 @@
     <div class="filters" id="filtersContainer">
       <div class="filter-group">
         <span class="filter-label">Project:</span>
-        <select class="filter-select" id="filterProject" style="min-width: 180px;">
+        <select class="filter-select" id="filterProject" style="max-width: 200px;">
           <option value="">All</option>
         </select>
       </div>
@@ -109,7 +109,11 @@
       <div class="filter-row-last">
         <label class="filter-checkbox">
           <input type="checkbox" id="filterMeOnly">
-          <span>Assigned to me</span>
+          <span>My tasks</span>
+        </label>
+        <label class="filter-checkbox" title="Hide tasks that are Done or Unsubscribed">
+          <input type="checkbox" id="filterResolved" checked>
+          <span>Exclude Resolved</span>
         </label>
         <button class="btn btn-clear" onclick="clearFilters()"><svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px;"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg> Clear</button>
       </div>
@@ -153,6 +157,13 @@
   </div>
 
   <script>
+    // Resolved status keywords — used for Exclude Resolved filter and status badge styling
+    const RESOLVED_STATUSES = ['done', 'complete', 'cancel', 'closed', 'unknown'];
+    function isResolved(status) {
+      const s = (status || '').toLowerCase();
+      return RESOLVED_STATUSES.some(k => s.includes(k));
+    }
+
     // SVG icon constants (reused throughout)
     const icons = {
       sync: '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align: -2px; margin-right: 4px;"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>',
@@ -319,6 +330,7 @@
     const filterStatus = document.getElementById('filterStatus');
     const filterDue = document.getElementById('filterDue');
     const filterMeOnly = document.getElementById('filterMeOnly');
+    const filterResolved = document.getElementById('filterResolved');
     const sortSelect = document.getElementById('sortSelect');
     
     let allTasks = [];
@@ -358,9 +370,19 @@
     });
 
     filterProject.addEventListener('change', applyFilters);
-    filterStatus.addEventListener('change', applyFilters);
+    filterStatus.addEventListener('change', () => {
+      const s = filterStatus.value.toLowerCase();
+      // Auto-uncheck Exclude Resolved for resolved statuses so results show; auto-check for other specific statuses
+      if (isResolved(s)) {
+        filterResolved.checked = false;
+      } else if (s !== '') {
+        filterResolved.checked = true;
+      }
+      applyFilters();
+    });
     filterDue.addEventListener('change', applyFilters);
     filterMeOnly.addEventListener('change', applyFilters);
+    filterResolved.addEventListener('change', applyFilters);
     sortSelect.addEventListener('change', applyFilters);
 
     async function loadFilters() {
@@ -418,6 +440,7 @@
       const status = filterStatus.value;
       const due = filterDue.value;
       const meOnly = filterMeOnly.checked;
+      const excludeResolved = filterResolved.checked;
 
       // Date calculations for filters
       const now = new Date();
@@ -445,6 +468,9 @@
         
         // Assigned to me filter
         if (meOnly && task.assigneeId !== currentPersonId) return false;
+
+        // Resolved filter (exclude done/unknown when checked)
+        if (excludeResolved && isResolved(task.status)) return false;
 
         // Due date filter
         if (due) {
@@ -537,6 +563,8 @@
       filterStatus.value = '';
       filterDue.value = '';
       filterMeOnly.checked = false;
+      // Clear unchecks everything for a clean slate
+      filterResolved.checked = false;
       showOnlyNew = false;
       updateWhatsNewToggle();
       applyFilters();
@@ -606,7 +634,7 @@
 
     function getStatusClass(status) {
       const s = status.toLowerCase();
-      if (s.includes('done') || s.includes('complete') || s.includes('closed')) return 'status-done';
+      if (RESOLVED_STATUSES.some(k => s.includes(k))) return 'status-done';
       if (s.includes('progress') || s.includes('review') || s.includes('testing')) return 'status-progress';
       return 'status-todo';
     }

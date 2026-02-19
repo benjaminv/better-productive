@@ -2,6 +2,16 @@
 
 All notable changes to Better Productive will be documented in this file.
 
+## [0.6.0] - 2026-02-19
+
+### Added
+- **Single task sync** — Refresh icon on each task card to pull latest data from Productive.io without a full sync or cooldown
+
+### Fixed
+- Mobile: Sync button hides "Sync" text during cooldown countdown to prevent row overflow
+
+---
+
 ## [0.5.0] - 2026-02-18
 
 ### Added

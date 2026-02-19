@@ -222,12 +222,12 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Preserve deleted/unsubscribed tasks
 - [x] Sort by project, due date, created, updated
 - [x] Exclude Resolved filter (Done/Cancel/Closed/Unknown)
+- [x] Single task sync (refresh individual task without full sync)
 
 ### Planned
 
 - [ ] Keyboard shortcuts reference
 - [ ] Webhook support for instant sync on Productive.io changes
-- [ ] Sync single or batch tickets (pull current data of single ticket, no full sync needed)
 - [ ] Sync batch tickets (pull current data of a batch of selected tickets, no full sync needed)
 
 ### Considering

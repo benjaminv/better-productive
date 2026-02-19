@@ -343,6 +343,8 @@ export default {
           return handleFilters(env);
         case '/api/settings':
           return handleSettings(request, env);
+        case '/api/sync-task':
+          return handleSyncTask(request, env);
         case '/update':
           return handleManualUpdate(request, env);
         default:
@@ -1194,6 +1196,114 @@ async function handleSettings(request, env) {
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500,
       headers: corsHeaders()
+    });
+  }
+}
+
+async function handleSyncTask(request, env) {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405, headers: corsHeaders()
+    });
+  }
+
+  try {
+    const { taskId } = await request.json();
+    if (!taskId) {
+      return new Response(JSON.stringify({ error: 'Missing taskId' }), {
+        status: 400, headers: corsHeaders()
+      });
+    }
+
+    const config = await getConfig(env);
+    const apiToken = config.apiToken;
+    if (!apiToken) {
+      return new Response(JSON.stringify({ error: 'API token not configured' }), {
+        status: 500, headers: corsHeaders()
+      });
+    }
+
+    const { orgId, orgSlug } = await getOrganizationInfo(env);
+
+    // Fetch single task from Productive.io
+    const response = await fetch(
+      `https://api.productive.io/api/v2/tasks/${taskId}?include=assignee,project,workflow_status`,
+      {
+        headers: {
+          'X-Auth-Token': apiToken,
+          'Content-Type': 'application/vnd.api+json',
+          'X-Organization-Id': orgId
+        }
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return new Response(JSON.stringify({ error: `API error ${response.status}: ${errorText}` }), {
+        status: response.status, headers: corsHeaders()
+      });
+    }
+
+    const data = await response.json();
+    const task = data.data;
+
+    // Build lookup maps from included data
+    const peopleMap = {};
+    const projectMap = {};
+    const statusMap = {};
+
+    (data.included || []).forEach(item => {
+      if (item.type === 'people') peopleMap[item.id] = item.attributes.name || item.attributes.email || 'Unknown';
+      if (item.type === 'projects') projectMap[item.id] = item.attributes.name;
+      if (item.type === 'workflow_statuses') statusMap[item.id] = item.attributes.name;
+    });
+
+    const assigneeId = task.relationships?.assignee?.data?.id;
+    const projectId = task.relationships?.project?.data?.id;
+    const statusId = task.relationships?.workflow_status?.data?.id;
+
+    // Load prefix map for ticket key generation
+    const prefixMapJson = await env.TASKS_KV.get('prefix_map');
+    const prefixMap = JSON.parse(prefixMapJson || '{}');
+    const prefix = prefixMap[projectId] || 'UNKN';
+
+    const updatedTask = {
+      id: task.id,
+      ticketNumber: task.attributes.number,
+      title: task.attributes.title,
+      projectId: projectId,
+      project: projectMap[projectId] || 'No Project',
+      projectPrefix: prefix,
+      ticketKey: `${prefix}-${task.attributes.number}`,
+      status: statusMap[statusId] || task.attributes.workflow_status_name || 'Unknown',
+      assigneeId: assigneeId || null,
+      assignee: peopleMap[assigneeId] || 'Unassigned',
+      dueDate: task.attributes.due_date,
+      createdAt: task.attributes.created_at,
+      updatedAt: task.attributes.updated_at,
+      url: `https://app.productive.io/${orgId}-${orgSlug}/tasks/task/${task.id}`,
+      _deleted: false
+    };
+
+    // Update the task in KV
+    const tasksJson = await env.TASKS_KV.get('all_tasks');
+    const allTasks = tasksJson ? JSON.parse(tasksJson) : [];
+    const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+    if (idx !== -1) {
+      allTasks[idx] = updatedTask;
+    } else {
+      allTasks.unshift(updatedTask);
+    }
+    await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
+
+    return new Response(JSON.stringify({ success: true, task: updatedTask }), {
+      headers: corsHeaders()
+    });
+
+  } catch (error) {
+    console.error('Sync task error:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500, headers: corsHeaders()
     });
   }
 }

@@ -610,6 +610,7 @@
               <a href="${task.url}" target="_blank">#${task.ticketNumber} ${escapeHtml(task.title)}</a>
             </div>
             <div class="task-actions">
+              <button class="sync-task-btn" data-id="${task.id}" title="Refresh this task">${icons.sync}</button>
               <button class="copy-btn" data-number="${task.ticketNumber}" data-title="${escapeHtml(task.title)}" data-url="${escapeHtml(task.url)}">${icons.copy}</button>
             </div>
           </div>
@@ -641,19 +642,65 @@
 
     // Copy button — delegated from results container
     resultsDiv.addEventListener('click', (e) => {
-      const btn = e.target.closest('.copy-btn');
-      if (!btn) return;
-      const { number, title, url } = btn.dataset;
-      const markdown = '[#' + number + ' ' + title + '](' + url + ')';
-      navigator.clipboard.writeText(markdown).then(() => {
+      const copyBtn = e.target.closest('.copy-btn');
+      if (copyBtn) {
+        const { number, title, url } = copyBtn.dataset;
+        const markdown = '[#' + number + ' ' + title + '](' + url + ')';
+        navigator.clipboard.writeText(markdown).then(() => {
+          copyBtn.innerHTML = icons.check;
+          copyBtn.classList.add('copied');
+          setTimeout(() => {
+            copyBtn.innerHTML = icons.copy;
+            copyBtn.classList.remove('copied');
+          }, 2000);
+        });
+        return;
+      }
+
+      const syncBtn = e.target.closest('.sync-task-btn');
+      if (syncBtn) {
+        syncTask(syncBtn);
+      }
+    });
+
+    async function syncTask(btn) {
+      const taskId = btn.dataset.id;
+      btn.disabled = true;
+      btn.classList.add('syncing');
+
+      try {
+        const res = await fetch('/api/sync-task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || 'Sync failed');
+
+        // Update in-memory task
+        const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+        if (idx !== -1) allTasks[idx] = data.task;
+
+        // Show success briefly
         btn.innerHTML = icons.check;
         btn.classList.add('copied');
         setTimeout(() => {
-          btn.innerHTML = icons.copy;
-          btn.classList.remove('copied');
+          btn.innerHTML = icons.sync;
+          btn.classList.remove('copied', 'syncing');
+          btn.disabled = false;
+        }, 1500);
+
+        // Re-render to reflect updated data
+        applyFilters();
+      } catch (err) {
+        btn.innerHTML = icons.x;
+        setTimeout(() => {
+          btn.innerHTML = icons.sync;
+          btn.classList.remove('syncing');
+          btn.disabled = false;
         }, 2000);
-      });
-    });
+      }
+    }
 
     // Active sync state
     let activeEventSource = null;

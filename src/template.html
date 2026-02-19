@@ -297,7 +297,7 @@
       const syncBtn = document.getElementById('syncBtn');
       if (remaining > 0) {
         syncBtn.disabled = true;
-        syncBtn.innerHTML = `${icons.sync}Sync (${formatCooldownTime(remaining)})`;
+        syncBtn.innerHTML = `${icons.sync}${formatCooldownTime(remaining)}`;
         syncBtn.title = `Sync available in ${formatCooldownTime(remaining)}`;
         // Clear any existing interval and set a new one
         if (!syncCooldownInterval) {

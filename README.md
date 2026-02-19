@@ -199,3 +199,45 @@ MIT License - see [LICENSE](LICENSE) for details.
 - Built with [Cloudflare Workers](https://workers.cloudflare.com/)
 - Task data from [Productive.io API](https://developer.productive.io/)
 
+## 🗺️ Roadmap
+
+### Completed
+- [x] Fetch tasks from Productive.io (subscribed + assigned)
+- [x] Search by ticket key, number, title, status, or assignee
+- [x] Filter by project, status, due date, and "assigned to me"
+- [x] Automatic project prefix generation (e.g., `PRIM-242`)
+- [x] Copy individual task as Markdown link
+- [x] Copy filtered tasks as Markdown with project groupings
+- [x] Pagination with keyboard navigation
+- [x] PIN authentication with session management
+- [x] Auto-detection of organisation and person ID from API token
+- [x] Real-time sync progress with Server-Sent Events
+- [x] "What's New" highlighting for changed tasks since last manual sync
+- [x] Cancel in-progress sync
+- [x] Dark/light theme toggle
+- [x] PWA support (installable app)
+- [x] Settings modal (title, PIN, API token)
+- [x] Sync cooldown rate limiting
+- [x] Scheduled background sync (cron)
+- [x] Preserve deleted/unsubscribed tasks
+- [x] Sort by project, due date, created, updated
+- [x] Exclude Resolved filter (Done/Cancel/Closed/Unknown)
+
+### Planned
+
+- [ ] Keyboard shortcuts reference
+- [ ] Webhook support for instant sync on Productive.io changes
+- [ ] Sync single or batch tickets (pull current data of single ticket, no full sync needed)
+- [ ] Sync batch tickets (pull current data of a batch of selected tickets, no full sync needed)
+
+### Considering
+- [ ] Browser notifications for new tasks
+- [ ] Task status quick-actions (without leaving the dashboard)
+- [ ] Time tracking integration
+- [ ] Multi-user support (separate data per API token)
+- [ ] Team view (see colleagues' assigned tasks)
+- [ ] Custom project prefix overrides
+
+---
+
+*This project is not affiliated with Productive.io.*

@@ -2,6 +2,23 @@
 
 All notable changes to Better Productive will be documented in this file.
 
+## [0.7.0] - 2026-02-24
+
+### Added
+- **Custom due date filter** — Select "Custom Date..." in the Due dropdown to filter by a specific date
+  - "On or before" mode (default) shows tasks due up to the selected date
+  - "On this date" checkbox for exact-date matching
+  - State resets when switching away from Custom; mobile-responsive layout
+- **Deleted task status** — Removed tasks now display as "Deleted" instead of "Unknown"
+- **Dynamic What's New count** — "New" badge count updates based on currently filtered results instead of showing total
+
+### Fixed
+- Date input appearance normalised across browsers
+- Custom date filter state properly resets when switching to other due-date presets
+- Robust date input clearing using `valueAsDate = null`
+
+---
+
 ## [0.6.0] - 2026-02-19
 
 ### Added

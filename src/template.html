@@ -478,9 +478,6 @@
       const nextYear = today + (365 * 86400000);
 
       filteredTasks = allTasks.filter(task => {
-        // "What's New" filter
-        if (showOnlyNew && !changedTaskIds.has(String(task.id))) return false;
-
         // Text search
         if (query) {
           const searchText = (task.ticketKey + ' ' + task.title + ' ' + task.status + ' ' + task.assignee + ' ' + task.project).toLowerCase();
@@ -529,6 +526,13 @@
 
         return true;
       });
+
+      // Count new tasks in filtered results, then apply "What's New" filter
+      const filteredNewCount = filteredTasks.filter(t => changedTaskIds.has(String(t.id))).length;
+      updateWhatsNewToggle(filteredNewCount);
+      if (showOnlyNew) {
+        filteredTasks = filteredTasks.filter(t => changedTaskIds.has(String(t.id)));
+      }
       
       // Apply sorting
       const sortValue = sortSelect.value;
@@ -621,15 +625,16 @@
       applyFilters();
     }
     
-    function updateWhatsNewToggle() {
+    function updateWhatsNewToggle(newCount) {
       const toggle = document.getElementById('whatsNewToggle');
       const checkbox = document.getElementById('whatsNewCheckbox');
       const label = document.getElementById('whatsNewLabel');
+      const count = newCount !== undefined ? newCount : changedTaskIds.size;
       
       if (changedTaskIds.size > 0) {
         toggle.style.display = '';
         checkbox.checked = showOnlyNew;
-        label.textContent = showOnlyNew ? 'Only New' : `New (${changedTaskIds.size})`;
+        label.textContent = showOnlyNew ? 'Only New' : `New (${count})`;
       } else {
         toggle.style.display = 'none';
         showOnlyNew = false;

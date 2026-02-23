@@ -820,13 +820,13 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
   // Preserve tasks from previous sync that are no longer in API (mark as deleted)
   for (const [taskId, existingTask] of existingTasksMap) {
     if (!taskMap.has(taskId)) {
-      // Task was in DB but not in API - mark as unknown but keep it
+      // Task was in DB but not in API - mark as deleted but preserve original status
       taskMap.set(taskId, {
         ...existingTask,
-        status: existingTask._deleted ? existingTask.status : 'Unknown',
+        status: existingTask._deleted ? existingTask.status : 'Deleted',
         _deleted: true
       });
-      allStatuses.add('Unknown');
+      allStatuses.add('Deleted');
     }
   }
 
@@ -1238,6 +1238,22 @@ async function handleSyncTask(request, env) {
     );
 
     if (!response.ok) {
+      // Handle 404 — task was deleted from Productive
+      if (response.status === 404) {
+        const tasksJson = await env.TASKS_KV.get('all_tasks');
+        const allTasks = tasksJson ? JSON.parse(tasksJson) : [];
+        const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+        if (idx !== -1) {
+          allTasks[idx] = { ...allTasks[idx], status: 'Deleted', _deleted: true };
+          await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
+          return new Response(JSON.stringify({ success: true, task: allTasks[idx], deleted: true }), {
+            headers: corsHeaders()
+          });
+        }
+        return new Response(JSON.stringify({ error: 'Task not found in API or local database' }), {
+          status: 404, headers: corsHeaders()
+        });
+      }
       const errorText = await response.text();
       return new Response(JSON.stringify({ error: `API error ${response.status}: ${errorText}` }), {
         status: response.status, headers: corsHeaders()

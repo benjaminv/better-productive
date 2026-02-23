@@ -158,7 +158,7 @@
 
   <script>
     // Resolved status keywords — used for Exclude Resolved filter and status badge styling
-    const RESOLVED_STATUSES = ['done', 'complete', 'cancel', 'closed', 'unknown'];
+    const RESOLVED_STATUSES = ['done', 'complete', 'cancel', 'cancelled', 'closed', 'deleted', 'unknown'];
     function isResolved(status) {
       const s = (status || '').toLowerCase();
       return RESOLVED_STATUSES.some(k => s.includes(k));
@@ -635,6 +635,7 @@
 
     function getStatusClass(status) {
       const s = status.toLowerCase();
+      if (s === 'deleted') return 'status-deleted';
       if (RESOLVED_STATUSES.some(k => s.includes(k))) return 'status-done';
       if (s.includes('progress') || s.includes('review') || s.includes('testing')) return 'status-progress';
       return 'status-todo';

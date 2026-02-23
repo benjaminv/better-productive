@@ -28,6 +28,9 @@
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* shared utils */
+.no-wrap { white-space: nowrap; }
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   background: var(--bg-primary);
@@ -127,6 +130,16 @@ h1 {
   gap: 0.25rem;
 }
 
+.filter-group.filter-due-group {
+  align-items: baseline;
+}
+
+.filter-group .filter-due-content {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
 .filter-label {
   font-size: 0.75rem;
   color: var(--text-secondary);
@@ -152,6 +165,29 @@ h1 {
   border-color: var(--accent);
   outline: none;
 }
+
+.custom-date-group {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.filter-input-date {
+  padding: 0.325rem 0.5rem;
+  font-size: 0.8rem;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text-primary);
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.filter-input-date:focus {
+  border-color: var(--accent);
+}
+
 
 .filter-row-last {
   display: flex;
@@ -444,9 +480,14 @@ h1 {
     flex-shrink: 0;
   }
   
-  .filter-select { 
+  .filter-select, .filter-due-content { 
     flex: 1;
     max-width: 100%;
+  }
+  
+  .custom-date-group {
+    flex-wrap: wrap;
+    width: 100%;
   }
   
   /* Assigned + Clear row on mobile */

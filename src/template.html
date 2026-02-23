@@ -94,17 +94,27 @@
           <option value="">All</option>
         </select>
       </div>
-      <div class="filter-group">
+      <div class="filter-group filter-due-group">
         <span class="filter-label">Due:</span>
-        <select class="filter-select" id="filterDue">
-          <option value="">Any</option>
-          <option value="overdue">Overdue</option>
-          <option value="today">Today</option>
-          <option value="week">This Week</option>
-          <option value="month">This Month</option>
-          <option value="year">This Year</option>
-          <option value="none">No Due Date</option>
-        </select>
+        <div class="filter-due-content">
+          <select class="filter-select" id="filterDue">
+            <option value="">Any</option>
+            <option value="overdue">Overdue</option>
+            <option value="today">Today</option>
+            <option value="week">This Week</option>
+            <option value="month">This Month</option>
+            <option value="year">This Year</option>
+            <option value="none">No Due Date</option>
+            <option value="custom">Custom Date...</option>
+          </select>
+          <div id="customDateContainer" class="custom-date-group" style="display: none;">
+            <input type="date" id="filterCustomDate" class="filter-input-date">
+            <label class="filter-checkbox" title="Default is on or before">
+              <input type="checkbox" id="filterExactDate">
+              <span class="no-wrap">On this date</span>
+            </label>
+          </div>
+        </div>
       </div>
       <div class="filter-row-last">
         <label class="filter-checkbox">
@@ -329,6 +339,9 @@
     const filterProject = document.getElementById('filterProject');
     const filterStatus = document.getElementById('filterStatus');
     const filterDue = document.getElementById('filterDue');
+    const filterCustomDate = document.getElementById('filterCustomDate');
+    const filterExactDate = document.getElementById('filterExactDate');
+    const customDateContainer = document.getElementById('customDateContainer');
     const filterMeOnly = document.getElementById('filterMeOnly');
     const filterResolved = document.getElementById('filterResolved');
     const sortSelect = document.getElementById('sortSelect');
@@ -380,7 +393,21 @@
       }
       applyFilters();
     });
-    filterDue.addEventListener('change', applyFilters);
+    
+    filterDue.addEventListener('change', () => {
+      if (filterDue.value === 'custom') {
+        customDateContainer.style.display = 'flex';
+      } else {
+        customDateContainer.style.display = 'none';
+        filterCustomDate.valueAsDate = null;
+        filterExactDate.checked = false;
+      }
+      applyFilters();
+    });
+    
+    filterCustomDate.addEventListener('change', applyFilters);
+    filterExactDate.addEventListener('change', applyFilters);
+
     filterMeOnly.addEventListener('change', applyFilters);
     filterResolved.addEventListener('change', applyFilters);
     sortSelect.addEventListener('change', applyFilters);
@@ -479,11 +506,25 @@
           
           const dueDate = new Date(task.dueDate).getTime();
           
-          if (due === 'overdue') return dueDate < today;
-          if (due === 'today') return dueDate >= today && dueDate < tomorrow;
-          if (due === 'week') return dueDate >= today && dueDate < nextWeek;
-          if (due === 'month') return dueDate >= today && dueDate < nextMonth;
-          if (due === 'year') return dueDate >= today && dueDate < nextYear;
+          if (due === 'custom') {
+            const customVal = filterCustomDate.value;
+            if (!customVal) return true; // No date picked yet, show all
+
+            const startOfDay = new Date(customVal + 'T00:00:00').getTime();
+            const endOfDay = startOfDay + 86400000;
+
+            if (filterExactDate.checked) {
+              return dueDate >= startOfDay && dueDate < endOfDay;
+            } else {
+              return dueDate < endOfDay;
+            }
+          } else {
+            if (due === 'overdue') return dueDate < today;
+            if (due === 'today') return dueDate >= today && dueDate < tomorrow;
+            if (due === 'week') return dueDate >= today && dueDate < nextWeek;
+            if (due === 'month') return dueDate >= today && dueDate < nextMonth;
+            if (due === 'year') return dueDate >= today && dueDate < nextYear;
+          }
         }
 
         return true;
@@ -562,6 +603,9 @@
       filterProject.value = '';
       filterStatus.value = '';
       filterDue.value = '';
+      filterCustomDate.valueAsDate = null;
+      filterExactDate.checked = false;
+      customDateContainer.style.display = 'none';
       filterMeOnly.checked = false;
       // Clear unchecks everything for a clean slate
       filterResolved.checked = false;

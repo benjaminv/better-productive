@@ -27,6 +27,7 @@
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
+input, select, button { height: 32px; }
 
 /* shared utils */
 .no-wrap { white-space: nowrap; }
@@ -84,6 +85,7 @@ h1 {
   outline: none;
   position: relative;
   z-index: 1;
+  height: 48px;
 }
 
 .search-input-wrapper {
@@ -182,6 +184,7 @@ h1 {
   outline: none;
   -webkit-appearance: none;
   appearance: none;
+  min-width: 8rem;
 }
 
 .filter-input-date:focus {
@@ -257,6 +260,8 @@ h1 {
   margin-left: auto;
 }
 .btn-clear:hover { color: var(--error); border-color: var(--error); }
+
+.btn.login {height: 44px;}
 
 /* Toggle Switch */
 .toggle-group {
@@ -583,6 +588,7 @@ h1 {
 
 .form-input {
   width: 100%;
+  height: auto;
   padding: 0.75rem 1rem;
   font-size: 1rem;
   background: var(--bg-card);

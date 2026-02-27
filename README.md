@@ -223,9 +223,12 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Sort by project, due date, created, updated
 - [x] Exclude Resolved filter (Done/Cancel/Closed/Unknown)
 - [x] Single task sync (refresh individual task without full sync)
+- [x] Project-grouped view with parent/subtask hierarchy (Project A-Z sort)
+- [x] Ghost parent cards for unsubscribed parent tasks (dashed border, derived from API included data)
+- [x] Clickable project links in task cards
+- [x] Smart single-task sync (ghost parents update children without polluting KV)
 
 ### Planned
-- [ ] Improve task list view when use group by project, show hierarchy (e.g., project > task > sub-task)
 - [ ] Keep current filter view with URL query parameter(s)
 - [ ] Keep pagination in URL for page refresh after sync
 - [ ] Keyboard shortcuts reference

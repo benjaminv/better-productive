@@ -1356,10 +1356,12 @@ async function handleSyncTask(request, env) {
     const tasksJson = await env.TASKS_KV.get('all_tasks');
     const allTasks = tasksJson ? JSON.parse(tasksJson) : [];
 
-    if (isAssigned || isSubscribed) {
-      // User's task — store/update in KV as normal
-      const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
-      if (idx !== -1) {
+    const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+    const alreadyInKV = idx !== -1;
+
+    if (alreadyInKV || isAssigned || isSubscribed) {
+      // Task is ours (or was ours) — update/add in KV
+      if (alreadyInKV) {
         allTasks[idx] = updatedTask;
       } else {
         allTasks.unshift(updatedTask);
@@ -1370,7 +1372,8 @@ async function handleSyncTask(request, env) {
         headers: corsHeaders()
       });
     } else {
-      // Ghost parent — update parent {} on all children that reference it
+      // True ghost — never in KV, not subscribed/assigned
+      // Only update parent {} on children
       const parentData = {
         id: task.id,
         number: task.attributes.number,
@@ -1390,6 +1393,7 @@ async function handleSyncTask(request, env) {
           updated++;
         }
       }
+
       if (updated > 0) {
         await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
       }

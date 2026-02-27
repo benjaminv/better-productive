@@ -612,7 +612,7 @@
 
     function renderGroupedTasks(tasks) {
       // Set of ALL task IDs in KV (not just this page) to detect true ghosts
-      const allTaskIds = new Set(allTasks.map(t => t.id));
+      const allTaskIds = new Set(allTasks.map(t => String(t.id)));
 
       // Group by project, preserving order of first appearance
       const groups = [];
@@ -635,14 +635,14 @@
         '</div>';
         html += '<div class="project-group-content" id="' + gid + '">';
 
-        const pageIds = new Set(group.tasks.map(t => t.id));
+        const pageIds = new Set(group.tasks.map(t => String(t.id)));
         const topLevel = [];
         const childrenOf = {};
         // Ghost parents: parentId exists but not in allTasks (not in KV at all)
         const ghostChildren = {};
 
         for (const task of group.tasks) {
-          const pid = task.parent?.id;
+          const pid = task.parent?.id ? String(task.parent.id) : null;
           if (pid && pageIds.has(pid)) {
             // Parent is on this page — nest normally
             if (!childrenOf[pid]) childrenOf[pid] = [];
@@ -877,7 +877,7 @@
         if (!res.ok) throw new Error(data.error || 'Sync failed');
 
         if (data.ghost) {
-          // Ghost sync — update parent {} on children in memory
+          // True ghost — update parent {} on children in memory
           for (const t of allTasks) {
             if (t.parent?.id === taskId) t.parent = data.parentData;
           }

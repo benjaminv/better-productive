@@ -731,7 +731,7 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
     while (hasMore && page <= 25) {  // 25 pages per filter type = 50 total max
       if (abortSignal?.aborted) throw new DOMException('Sync cancelled', 'AbortError');
       const url = `${baseUrl}?page[number]=${page}&page[size]=200` +
-        `&include=assignee,project,workflow_status` +
+        `&include=assignee,project,workflow_status,parent_task` +
         `&filter[${filterParam}]=${filterValue}` +
         `&sort=-id`;             // Fetch newest tasks first
 
@@ -750,6 +750,8 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
       const projectMap = {};
       const statusMap = {};
 
+      const includedTasks = {};
+
       (data.included || []).forEach(item => {
         if (item.type === 'people') {
           const name = item.attributes.name || item.attributes.email || 'Unknown';
@@ -763,6 +765,16 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
         if (item.type === 'workflow_statuses') {
           statusMap[item.id] = item.attributes.name;
         }
+        if (item.type === 'tasks') {
+          includedTasks[item.id] = {
+            number: item.attributes.number,
+            title: item.attributes.title,
+            status: item.attributes.workflow_status_name || null,
+            dueDate: item.attributes.due_date,
+            createdAt: item.attributes.created_at,
+            updatedAt: item.attributes.updated_at
+          };
+        }
       });
 
       // Process tasks
@@ -772,9 +784,12 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
         const assigneeId = task.relationships?.assignee?.data?.id;
         const projectId = task.relationships?.project?.data?.id;
         const statusId = task.relationships?.workflow_status?.data?.id;
+        const parentId = task.relationships?.parent_task?.data?.id || null;
         const status = statusMap[statusId] || task.attributes.workflow_status_name || 'Unknown';
         
         allStatuses.add(status);
+
+        const parentInc = parentId && includedTasks[parentId] ? includedTasks[parentId] : null;
 
         taskMap.set(task.id, {
           id: task.id,
@@ -788,6 +803,15 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
           dueDate: task.attributes.due_date,
           createdAt: task.attributes.created_at,
           updatedAt: task.attributes.updated_at,
+          parent: parentId ? {
+            id: parentId,
+            number: parentInc?.number || null,
+            title: parentInc?.title || null,
+            status: parentInc?.status || null,
+            dueDate: parentInc?.dueDate || null,
+            createdAt: parentInc?.createdAt || null,
+            updatedAt: parentInc?.updatedAt || null
+          } : null,
           url: `https://app.productive.io/${orgId}-${orgSlug}/tasks/task/${task.id}`,
           _deleted: false
         });
@@ -856,7 +880,7 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
   await env.TASKS_KV.put('prefix_index', JSON.stringify(prefixIndex));
   await env.TASKS_KV.put('last_updated', new Date().toISOString());
   await env.TASKS_KV.put('task_count', allTasks.length.toString());
-  
+
   // Count assigned tasks for stats
   const assignedCount = allTasks.filter(t => t.assigneeId === personId && !t._deleted).length;
   await env.TASKS_KV.put('assigned_count', assignedCount.toString());
@@ -1227,7 +1251,7 @@ async function handleSyncTask(request, env) {
 
     // Fetch single task from Productive.io
     const response = await fetch(
-      `https://api.productive.io/api/v2/tasks/${taskId}?include=assignee,project,workflow_status`,
+      `https://api.productive.io/api/v2/tasks/${taskId}?include=assignee,project,workflow_status,parent_task`,
       {
         headers: {
           'X-Auth-Token': apiToken,
@@ -1268,15 +1292,28 @@ async function handleSyncTask(request, env) {
     const projectMap = {};
     const statusMap = {};
 
+    let parentInc = null;
+
     (data.included || []).forEach(item => {
       if (item.type === 'people') peopleMap[item.id] = item.attributes.name || item.attributes.email || 'Unknown';
       if (item.type === 'projects') projectMap[item.id] = item.attributes.name;
       if (item.type === 'workflow_statuses') statusMap[item.id] = item.attributes.name;
+      if (item.type === 'tasks') {
+        parentInc = {
+          number: item.attributes.number,
+          title: item.attributes.title,
+          status: item.attributes.workflow_status_name || null,
+          dueDate: item.attributes.due_date,
+          createdAt: item.attributes.created_at,
+          updatedAt: item.attributes.updated_at
+        };
+      }
     });
 
     const assigneeId = task.relationships?.assignee?.data?.id;
     const projectId = task.relationships?.project?.data?.id;
     const statusId = task.relationships?.workflow_status?.data?.id;
+    const parentId = task.relationships?.parent_task?.data?.id || null;
 
     // Load prefix map for ticket key generation
     const prefixMapJson = await env.TASKS_KV.get('prefix_map');
@@ -1297,24 +1334,70 @@ async function handleSyncTask(request, env) {
       dueDate: task.attributes.due_date,
       createdAt: task.attributes.created_at,
       updatedAt: task.attributes.updated_at,
+      parent: parentId ? {
+        id: parentId,
+        number: parentInc?.number || null,
+        title: parentInc?.title || null,
+        status: parentInc?.status || null,
+        dueDate: parentInc?.dueDate || null,
+        createdAt: parentInc?.createdAt || null,
+        updatedAt: parentInc?.updatedAt || null
+      } : null,
       url: `https://app.productive.io/${orgId}-${orgSlug}/tasks/task/${task.id}`,
       _deleted: false
     };
 
-    // Update the task in KV
+    // Check if user is subscribed or assigned to this task
+    const personId = await env.TASKS_KV.get('current_person_id');
+    const isAssigned = assigneeId === personId;
+    const subscribers = task.relationships?.subscribers?.data || [];
+    const isSubscribed = subscribers.some(s => s.id === personId);
+
     const tasksJson = await env.TASKS_KV.get('all_tasks');
     const allTasks = tasksJson ? JSON.parse(tasksJson) : [];
-    const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
-    if (idx !== -1) {
-      allTasks[idx] = updatedTask;
-    } else {
-      allTasks.unshift(updatedTask);
-    }
-    await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
 
-    return new Response(JSON.stringify({ success: true, task: updatedTask }), {
-      headers: corsHeaders()
-    });
+    if (isAssigned || isSubscribed) {
+      // User's task — store/update in KV as normal
+      const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+      if (idx !== -1) {
+        allTasks[idx] = updatedTask;
+      } else {
+        allTasks.unshift(updatedTask);
+      }
+      await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
+
+      return new Response(JSON.stringify({ success: true, task: updatedTask }), {
+        headers: corsHeaders()
+      });
+    } else {
+      // Ghost parent — update parent {} on all children that reference it
+      const parentData = {
+        id: task.id,
+        number: task.attributes.number,
+        title: task.attributes.title,
+        status: statusMap[statusId] || task.attributes.workflow_status_name || 'Unknown',
+        assigneeId: assigneeId || null,
+        assignee: peopleMap[assigneeId] || 'Unassigned',
+        dueDate: task.attributes.due_date,
+        createdAt: task.attributes.created_at,
+        updatedAt: task.attributes.updated_at
+      };
+
+      let updated = 0;
+      for (const t of allTasks) {
+        if (t.parent?.id === taskId) {
+          t.parent = parentData;
+          updated++;
+        }
+      }
+      if (updated > 0) {
+        await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
+      }
+
+      return new Response(JSON.stringify({ success: true, ghost: true, parentData, updatedChildren: updated }), {
+        headers: corsHeaders()
+      });
+    }
 
   } catch (error) {
     console.error('Sync task error:', error);

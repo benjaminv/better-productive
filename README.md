@@ -225,7 +225,9 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Single task sync (refresh individual task without full sync)
 
 ### Planned
-
+- [ ] Improve task list view when use group by project, show hierarchy (e.g., project > task > sub-task)
+- [ ] Keep current filter view with URL query parameter(s)
+- [ ] Keep pagination in URL for page refresh after sync
 - [ ] Keyboard shortcuts reference
 - [ ] Webhook support for instant sync on Productive.io changes
 - [ ] Sync batch tickets (pull current data of a batch of selected tickets, no full sync needed)

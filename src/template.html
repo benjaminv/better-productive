@@ -183,6 +183,8 @@
       person: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
       folder: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"/></svg>',
       calendar: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 14v2.2l1.6 1"/><path d="M16 2v4"/><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M3 10h5"/><path d="M8 2v4"/><circle cx="16" cy="16" r="6"/></svg>',
+      chevronsUpDown: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>',
+      chevronsDownUp: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 4 5 5 5-5"/><path d="m7 20 5-5 5 5"/></svg>',
     };
 
     // Theme toggle
@@ -598,8 +600,107 @@
           '<button class="btn btn-secondary" onclick="changePage(1)" ' + (currentPage === maxPage ? 'disabled' : '') + ' style="padding: 0.25rem 0.75rem;">Next</button>' +
         '</div>' : '';
 
-      resultsDiv.innerHTML = pageTasks.map(renderTask).join('') + paginationHtml;
+      let tasksHtml;
+      if (sortSelect.value === 'project-asc') {
+        tasksHtml = renderGroupedTasks(pageTasks);
+      } else {
+        tasksHtml = pageTasks.map(t => renderTask(t)).join('');
+      }
+      resultsDiv.innerHTML = tasksHtml + paginationHtml;
       resultCountDiv.textContent = filteredTasks.length + ' results' + (filteredTasks.length > pageSize ? ' (showing ' + (startIndex + 1) + '-' + endIndex + ')' : '');
+    }
+
+    function renderGroupedTasks(tasks) {
+      // Set of ALL task IDs in KV (not just this page) to detect true ghosts
+      const allTaskIds = new Set(allTasks.map(t => t.id));
+
+      // Group by project, preserving order of first appearance
+      const groups = [];
+      const groupMap = {};
+      for (const task of tasks) {
+        if (!groupMap[task.projectId]) {
+          groupMap[task.projectId] = { name: task.project, tasks: [] };
+          groups.push(groupMap[task.projectId]);
+        }
+        groupMap[task.projectId].tasks.push(task);
+      }
+
+      let html = '';
+      let groupIdx = 0;
+      for (const group of groups) {
+        const gid = 'pg-' + groupIdx++;
+        html += '<div class="project-group-header" onclick="toggleProjectGroup(\'' + gid + '\')">' +
+          icons.folder + ' ' + escapeHtml(group.name) +
+          '<span class="chevron" id="' + gid + '-icon">' + icons.chevronsDownUp + '</span>' +
+        '</div>';
+        html += '<div class="project-group-content" id="' + gid + '">';
+
+        const pageIds = new Set(group.tasks.map(t => t.id));
+        const topLevel = [];
+        const childrenOf = {};
+        // Ghost parents: parentId exists but not in allTasks (not in KV at all)
+        const ghostChildren = {};
+
+        for (const task of group.tasks) {
+          const pid = task.parent?.id;
+          if (pid && pageIds.has(pid)) {
+            // Parent is on this page — nest normally
+            if (!childrenOf[pid]) childrenOf[pid] = [];
+            childrenOf[pid].push(task);
+          } else if (pid && !allTaskIds.has(pid)) {
+            // Parent not in KV at all — ghost parent
+            if (!ghostChildren[pid]) ghostChildren[pid] = [];
+            ghostChildren[pid].push(task);
+          } else {
+            topLevel.push(task);
+          }
+        }
+
+        // Render ghost parents first (with their children)
+        for (const [parentId, children] of Object.entries(ghostChildren)) {
+          const ref = children[0];
+          const parentUrl = ref.url.replace(/\/task\/[^/]+$/, '/task/' + parentId);
+          html += renderGhostParent({
+            id: parentId,
+            number: ref.parent?.number,
+            title: ref.parent?.title,
+            status: ref.parent?.status,
+            assignee: ref.parent?.assignee,
+            dueDate: ref.parent?.dueDate,
+            createdAt: ref.parent?.createdAt,
+            updatedAt: ref.parent?.updatedAt,
+            project: group.name,
+            projectId: ref.projectId,
+            projectPrefix: ref.projectPrefix,
+            url: parentUrl
+          });
+          for (const child of children) {
+            html += renderTask(child, true);
+          }
+        }
+
+        // Render normal top-level tasks (with their children)
+        for (const task of topLevel) {
+          html += renderTask(task);
+          if (childrenOf[task.id]) {
+            for (const child of childrenOf[task.id]) {
+              html += renderTask(child, true);
+            }
+          }
+        }
+        html += '</div>';
+      }
+      return html;
+    }
+
+    function toggleProjectGroup(gid) {
+      const content = document.getElementById(gid);
+      const icon = document.getElementById(gid + '-icon');
+      if (content.classList.toggle('collapsed')) {
+        icon.innerHTML = icons.chevronsUpDown;
+      } else {
+        icon.innerHTML = icons.chevronsDownUp;
+      }
     }
 
     function clearFilters() {
@@ -642,15 +743,62 @@
       }
     }
 
-    function renderTask(task) {
+    function projectUrl(taskUrl, projectId) {
+      const parts = taskUrl.split('app.productive.io/');
+      const orgSlug = parts.length > 1 ? parts[1].split('/')[0] : '';
+      return orgSlug ? 'https://app.productive.io/' + orgSlug + '/projects/' + projectId : '';
+    }
+
+    function renderGhostParent(p) {
+      const ticketKey = p.number ? (p.projectPrefix || 'UNKN') + '-' + p.number : '#' + p.id;
+      const titleText = p.number && p.title
+        ? '#' + p.number + ' ' + escapeHtml(p.title)
+        : 'Parent task (not subscribed)';
+      const ghostStatus = p.status || 'Unknown';
+      const statusHtml = '<span class="status-badge ' + getStatusClass(ghostStatus) + '">' + escapeHtml(ghostStatus) + '</span>';
+      const created = p.createdAt ? formatDate(p.createdAt) : '';
+      const updated = p.updatedAt ? formatDate(p.updatedAt) : '';
+      const projUrl = projectUrl(p.url, p.projectId);
+      const projLink = projUrl
+        ? '<a href="' + projUrl + '" target="_blank" style="color: inherit; text-decoration: none;">' + escapeHtml(p.project) + '</a>'
+        : escapeHtml(p.project);
+      return `
+        <div class="task-card task-card-ghost">
+          <div class="task-header">
+            <span class="ticket-key"><a href="${p.url}" target="_blank">${ticketKey}</a></span>
+            <div class="task-title"><a href="${p.url}" target="_blank">${titleText}</a></div>
+            <div class="task-actions">
+              <button class="sync-task-btn" data-id="${p.id}" title="Refresh this task">${icons.sync}</button>
+            </div>
+          </div>
+          <div class="task-meta">
+            ${statusHtml}
+            ${p.assignee ? '<span>' + icons.person + ' ' + escapeHtml(p.assignee) + '</span>' : ''}
+            <span>${icons.folder} ${projLink}</span>
+            ${p.dueDate ? '<span>' + icons.calendar + ' ' + p.dueDate + '</span>' : ''}
+          </div>
+          <div class="task-dates">
+            ${created ? '<span>Created: ' + created + '</span>' : ''}
+            ${updated ? '<span>Updated: ' + updated + '</span>' : ''}
+          </div>
+        </div>
+      `;
+    }
+
+    function renderTask(task, isSubtask) {
       const statusClass = getStatusClass(task.status);
       const created = task.createdAt ? formatDate(task.createdAt) : '';
       const updated = task.updatedAt ? formatDate(task.updatedAt) : '';
       const isNew = changedTaskIds.has(String(task.id));
       const newClass = isNew ? ' task-card-new' : '';
-      
+      const subClass = isSubtask ? ' task-card-sub' : '';
+      const projUrl = projectUrl(task.url, task.projectId);
+      const projLink = projUrl
+        ? '<a href="' + projUrl + '" target="_blank" style="color: inherit; text-decoration: none;">' + escapeHtml(task.project) + '</a>'
+        : escapeHtml(task.project);
+
       return `
-        <div class="task-card${newClass}">
+        <div class="task-card${newClass}${subClass}">
           <div class="task-header">
             <span class="ticket-key">
               <a href="/browse/${task.ticketKey}" title="Open in Productive">${task.ticketKey}</a>
@@ -666,7 +814,7 @@
           <div class="task-meta">
             <span class="status-badge ${statusClass}">${escapeHtml(task.status)}</span>
             <span>${icons.person} ${escapeHtml(task.assignee)}</span>
-            <span>${icons.folder} ${escapeHtml(task.project)}</span>
+            <span>${icons.folder} ${projLink}</span>
             ${task.dueDate ? '<span>' + icons.calendar + ' ' + task.dueDate + '</span>' : ''}
           </div>
           <div class="task-dates">
@@ -684,6 +832,7 @@
 
     function getStatusClass(status) {
       const s = status.toLowerCase();
+      if (s === 'unknown') return 'status-todo';
       if (s === 'deleted') return 'status-deleted';
       if (RESOLVED_STATUSES.some(k => s.includes(k))) return 'status-done';
       if (s.includes('progress') || s.includes('review') || s.includes('testing')) return 'status-progress';
@@ -727,9 +876,16 @@
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || 'Sync failed');
 
-        // Update in-memory task
-        const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
-        if (idx !== -1) allTasks[idx] = data.task;
+        if (data.ghost) {
+          // Ghost sync — update parent {} on children in memory
+          for (const t of allTasks) {
+            if (t.parent?.id === taskId) t.parent = data.parentData;
+          }
+        } else {
+          // Real task — update or add to allTasks
+          const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+          if (idx !== -1) allTasks[idx] = data.task;
+        }
 
         // Show success briefly
         btn.innerHTML = icons.check;

@@ -100,7 +100,7 @@
           <select class="filter-select" id="filterDue">
             <option value="">Any</option>
             <option value="overdue">Overdue</option>
-            <option value="today">Today</option>
+            <option value="today">Due Today</option>
             <option value="week">This Week</option>
             <option value="month">This Month</option>
             <option value="year">This Year</option>
@@ -399,6 +399,10 @@
     filterDue.addEventListener('change', () => {
       if (filterDue.value === 'custom') {
         customDateContainer.style.display = 'flex';
+        if (!filterCustomDate.value) {
+          const d = new Date();
+          filterCustomDate.value = d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
+        }
       } else {
         customDateContainer.style.display = 'none';
         filterCustomDate.valueAsDate = null;
@@ -519,7 +523,7 @@
             }
           } else {
             if (due === 'overdue') return dueDate < today;
-            if (due === 'today') return dueDate >= today && dueDate < tomorrow;
+            if (due === 'today') return dueDate < tomorrow;
             if (due === 'week') return dueDate >= today && dueDate < nextWeek;
             if (due === 'month') return dueDate >= today && dueDate < nextMonth;
             if (due === 'year') return dueDate >= today && dueDate < nextYear;

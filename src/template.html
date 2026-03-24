@@ -361,6 +361,44 @@
     let changedTaskIds = new Set();
     let showOnlyNew = false;
 
+    // View state persistence
+    const VIEW_STATE_KEY = 'tasks_view';
+
+    function saveViewState() {
+      const state = {
+        project: filterProject.value,
+        status: filterStatus.value,
+        due: filterDue.value,
+        customDate: filterCustomDate.value,
+        exactDate: filterExactDate.checked,
+        meOnly: filterMeOnly.checked,
+        excludeResolved: filterResolved.checked,
+        sort: sortSelect.value,
+      };
+      localStorage.setItem(VIEW_STATE_KEY, JSON.stringify(state));
+    }
+
+    function restoreViewState() {
+      try {
+        const raw = localStorage.getItem(VIEW_STATE_KEY);
+        if (!raw) return;
+        const s = JSON.parse(raw);
+        if (s.project) filterProject.value = s.project;
+        if (s.status) filterStatus.value = s.status;
+        if (s.due) {
+          filterDue.value = s.due;
+          if (s.due === 'custom') {
+            customDateContainer.style.display = 'flex';
+            if (s.customDate) filterCustomDate.value = s.customDate;
+            filterExactDate.checked = !!s.exactDate;
+          }
+        }
+        if (s.meOnly) filterMeOnly.checked = true;
+        if (s.excludeResolved !== undefined) filterResolved.checked = s.excludeResolved;
+        if (s.sort) sortSelect.value = s.sort;
+      } catch (e) { /* ignore corrupt state */ }
+    }
+
     // Load filters and initial data
     loadFilters();
     loadTasks();
@@ -442,7 +480,10 @@
         
         // Store current person ID
         currentPersonId = data.currentPersonId;
-        
+
+        // Restore saved view state after options are populated
+        restoreViewState();
+
         // Store changed task IDs for What's New highlighting
         if (data.changedTaskIds && data.changedTaskIds.length > 0) {
           changedTaskIds = new Set(data.changedTaskIds.map(id => String(id)));
@@ -572,8 +613,9 @@
       currentPage = 1;
       renderTasks();
       updateCopyButtonState();
+      saveViewState();
     }
-    
+
     function changePage(delta) {
       const maxPage = Math.ceil(filteredTasks.length / pageSize) || 1;
       const newPage = currentPage + delta;
@@ -720,6 +762,7 @@
       filterResolved.checked = false;
       showOnlyNew = false;
       updateWhatsNewToggle();
+      localStorage.removeItem(VIEW_STATE_KEY);
       applyFilters();
     }
     

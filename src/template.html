@@ -491,14 +491,15 @@
       else searchClearBtn.setAttribute('hidden', '');
       // Swap stats text: live count while searching, totals when idle.
       // When remote search is on AND has results, append "+ N" to indicate extras available.
-      if (searchStats) {
-        if (hasQuery) {
-          const local = filteredTasks.length;
-          const extra = (isRemoteSearchOn() && remoteResultsCount > 0) ? (' + ' + remoteResultsCount) : '';
-          searchStats.textContent = local + extra + ' results';
-        } else {
-          searchStats.textContent = baseStatsText;
-        }
+      if (hasQuery) {
+        const local = filteredTasks.length;
+        const extra = (isRemoteSearchOn() && remoteResultsCount > 0) ? (' + ' + remoteResultsCount) : '';
+        if (searchStats) searchStats.textContent = local + extra + ' results';
+        // On mobile, .search-stats is normally hidden — show it when searching
+        searchInput.closest('.search-input-wrapper')?.classList.add('has-query');
+      } else {
+        if (searchStats) searchStats.textContent = baseStatsText;
+        searchInput.closest('.search-input-wrapper')?.classList.remove('has-query');
       }
     }
 

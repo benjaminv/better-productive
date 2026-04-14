@@ -14,7 +14,7 @@
 {{STYLES}}
   </style>
 </head>
-<body>
+<body data-remote-search-enabled="{{REMOTE_SEARCH_ENABLED}}">
   <div class="container">
     <header>
       <div class="header-top">
@@ -65,7 +65,18 @@
           {{PIN_SECTION}}
           {{TOKEN_SECTION}}
         </div>
-        
+
+        <div class="modal-section">
+          <h3>Features</h3>
+          <div class="settings-toggle">
+            <label class="filter-checkbox">
+              <input type="checkbox" id="settingsRemoteSearch" {{REMOTE_SEARCH_CHECKED}} onchange="saveRemoteSearchToggle()">
+              <span>Enable remote search</span>
+            </label>
+            <p class="hint">When you search, also look up tickets on Productive.io that you're not subscribed/assigned to. You can pin matches into your dashboard. Off by default to keep the view focused.</p>
+          </div>
+        </div>
+
         {{LOGOUT_SECTION}}
       </div>
     </div>
@@ -75,9 +86,23 @@
 
     <div class="search-box">
       <div class="search-input-wrapper">
-        <input type="text" class="search-input" id="searchInput" 
-               placeholder="ticket number, title, status..." autofocus>
-        <span class="search-stats" id="searchStats">{{STATS_TEXT}}</span>
+        <input type="text" class="search-input" id="searchInput"
+               placeholder="ticket number, title, status..."
+               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+               autofocus>
+        <div class="search-input-trailing">
+          <span class="search-stats" id="searchStats">{{STATS_TEXT}}</span>
+          <button type="button" class="search-clear-btn" id="searchClearBtn" aria-label="Clear search" title="Clear (Esc)" hidden>
+            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <div class="remote-search-dropdown" id="remoteSearchDropdown" hidden>
+          <div class="remote-search-header">
+            <span class="remote-search-spinner" id="remoteSearchSpinner" hidden></span>
+            <span class="remote-search-title" id="remoteSearchTitle">Found on Productive.io</span>
+          </div>
+          <div class="remote-search-list" id="remoteSearchList"></div>
+        </div>
       </div>
     </div>
 
@@ -185,6 +210,7 @@
       calendar: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 14v2.2l1.6 1"/><path d="M16 2v4"/><path d="M21 7.5V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h3.5"/><path d="M3 10h5"/><path d="M8 2v4"/><circle cx="16" cy="16" r="6"/></svg>',
       chevronsUpDown: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>',
       chevronsDownUp: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 4 5 5 5-5"/><path d="m7 20 5-5 5 5"/></svg>',
+      trash: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>',
     };
 
     // Theme toggle
@@ -269,6 +295,30 @@
       }
     }
     
+    async function saveRemoteSearchToggle() {
+      const checkbox = document.getElementById('settingsRemoteSearch');
+      const enabled = checkbox.checked;
+      try {
+        const res = await fetch('/api/settings', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'remote_search_enabled', value: enabled })
+        });
+        const data = await res.json();
+        if (!data.success) {
+          alert('Error: ' + (data.error || 'failed'));
+          checkbox.checked = !enabled;
+          return;
+        }
+        document.body.dataset.remoteSearchEnabled = enabled ? 'true' : 'false';
+        // Hide the dropdown if turning off
+        if (!enabled) hideRemoteDropdown();
+      } catch (e) {
+        alert('Error: ' + e.message);
+        checkbox.checked = !enabled;
+      }
+    }
+
     async function saveToken() {
       const token = document.getElementById('settingsToken').value.trim();
       if (!token) return alert('Please enter a new API token');
@@ -417,9 +467,211 @@
       }
     });
 
+    // ===== Search input UX: count/clear, ESC, remote search =====
+    const searchClearBtn = document.getElementById('searchClearBtn');
+    const searchStats = document.getElementById('searchStats');
+    const remoteDropdown = document.getElementById('remoteSearchDropdown');
+    const remoteList = document.getElementById('remoteSearchList');
+    const remoteSpinner = document.getElementById('remoteSearchSpinner');
+    const remoteTitle = document.getElementById('remoteSearchTitle');
+    const baseStatsText = searchStats ? searchStats.textContent : '';
+    let remoteDebounceTimer;
+    let remoteAbortController = null;
+    let remoteResultsCount = 0;
+
+    function isRemoteSearchOn() {
+      return document.body.dataset.remoteSearchEnabled === 'true';
+    }
+
+    function updateSearchInputUX() {
+      const q = searchInput.value;
+      const hasQuery = q.trim().length > 0;
+      // Toggle clear button
+      if (hasQuery) searchClearBtn.removeAttribute('hidden');
+      else searchClearBtn.setAttribute('hidden', '');
+      // Swap stats text: live count while searching, totals when idle.
+      // When remote search is on AND has results, append "+ N" to indicate extras available.
+      if (searchStats) {
+        if (hasQuery) {
+          const local = filteredTasks.length;
+          const extra = (isRemoteSearchOn() && remoteResultsCount > 0) ? (' + ' + remoteResultsCount) : '';
+          searchStats.textContent = local + extra + ' results';
+        } else {
+          searchStats.textContent = baseStatsText;
+        }
+      }
+    }
+
+    function hideRemoteDropdown() {
+      remoteDropdown.setAttribute('hidden', '');
+      remoteList.innerHTML = '';
+      remoteSpinner.setAttribute('hidden', '');
+      if (remoteAbortController) {
+        remoteAbortController.abort();
+        remoteAbortController = null;
+      }
+      remoteResultsCount = 0;
+      updateSearchInputUX();
+    }
+
+    function showRemoteSpinner() {
+      remoteTitle.textContent = 'Searching on Productive.io...';
+      remoteSpinner.removeAttribute('hidden');
+      remoteDropdown.removeAttribute('hidden');
+    }
+
+    function renderRemoteResults(results) {
+      if (!results || results.length === 0) {
+        // No results → silently hide (no empty state)
+        hideRemoteDropdown();
+        return;
+      }
+      remoteResultsCount = results.length;
+      remoteSpinner.setAttribute('hidden', '');
+      remoteTitle.textContent = 'Found on Productive.io';
+      remoteDropdown.removeAttribute('hidden');
+      updateSearchInputUX();
+      remoteList.innerHTML = results.map(t => {
+        const status = escapeHtml(t.status || 'Unknown');
+        const proj = escapeHtml(t.project || '');
+        const title = escapeHtml(t.title || '');
+        const key = escapeHtml(t.ticketKey || ('#' + t.ticketNumber));
+        const taskHref = escapeHtml(t.url || '#');
+        const projHref = escapeHtml(projectUrl(t.url || '', t.projectId) || '#');
+        const assigneeName = escapeHtml(t.assignee || 'Unassigned');
+        const projLink = projHref !== '#'
+          ? `<a href="${projHref}" target="_blank" rel="noopener" class="remote-search-link">${proj}</a>`
+          : proj;
+        return `
+          <div class="remote-search-item" data-id="${t.id}">
+            <div class="remote-search-item-main">
+              <a href="${taskHref}" target="_blank" rel="noopener" class="remote-search-key">${key}</a>
+              <a href="${taskHref}" target="_blank" rel="noopener" class="remote-search-title-text">#${t.ticketNumber} ${title}</a>
+            </div>
+            <div class="remote-search-item-meta">
+              <span class="status-badge ${getStatusClass(t.status || '')}">${status}</span>
+              <span>${icons.person} ${assigneeName}</span>
+              <span>${icons.folder} ${projLink}</span>
+            </div>
+            <button class="remote-search-add" data-id="${t.id}" title="Add to dashboard">+ Add</button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    async function runRemoteSearch(query) {
+      if (!isRemoteSearchOn()) return;
+      if (!query || query.length < 2) {
+        hideRemoteDropdown();
+        return;
+      }
+      // Cancel any in-flight request
+      if (remoteAbortController) remoteAbortController.abort();
+      remoteAbortController = new AbortController();
+      const signal = remoteAbortController.signal;
+
+      showRemoteSpinner();
+      try {
+        const res = await fetch('/api/remote-search?q=' + encodeURIComponent(query), { signal });
+        if (signal.aborted) return;
+        if (!res.ok) {
+          // Disabled or error — silently hide
+          hideRemoteDropdown();
+          return;
+        }
+        const data = await res.json();
+        if (signal.aborted) return;
+        renderRemoteResults(data.results || []);
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+        hideRemoteDropdown();
+      }
+    }
+
+    async function addRemoteTask(taskId, btn) {
+      btn.disabled = true;
+      btn.textContent = 'Adding...';
+      try {
+        const res = await fetch('/api/add-manual-task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Add failed');
+
+        // Insert into local allTasks
+        const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+        if (idx !== -1) allTasks[idx] = data.task;
+        else allTasks.unshift(data.task);
+
+        // Remove the row from dropdown; if empty, hide it
+        const row = btn.closest('.remote-search-item');
+        if (row) row.remove();
+        remoteResultsCount = Math.max(0, remoteResultsCount - 1);
+        if (!remoteList.querySelector('.remote-search-item')) {
+          hideRemoteDropdown();
+        }
+
+        // Refresh main list (keeping the search query) — applyFilters calls updateSearchInputUX
+        applyFilters();
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = '+ Add';
+        alert('Failed to add: ' + err.message);
+      }
+    }
+
+    // Click on Add button (event delegation)
+    remoteDropdown.addEventListener('click', (e) => {
+      const addBtn = e.target.closest('.remote-search-add');
+      if (addBtn) addRemoteTask(addBtn.dataset.id, addBtn);
+    });
+
+    // Click outside dropdown closes it
+    document.addEventListener('click', (e) => {
+      if (remoteDropdown.hasAttribute('hidden')) return;
+      const wrapper = remoteDropdown.closest('.search-input-wrapper');
+      if (wrapper && !wrapper.contains(e.target)) hideRemoteDropdown();
+    });
+
+    // Clear button
+    function clearSearchInput() {
+      searchInput.value = '';
+      hideRemoteDropdown();
+      applyFilters();
+      updateSearchInputUX();
+      searchInput.focus();
+    }
+    searchClearBtn.addEventListener('click', clearSearchInput);
+
+    // Two-stage ESC: dropdown first, then input
+    searchInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        if (!remoteDropdown.hasAttribute('hidden')) {
+          e.preventDefault();
+          hideRemoteDropdown();
+        } else if (searchInput.value) {
+          e.preventDefault();
+          clearSearchInput();
+        }
+      }
+    });
+
     searchInput.addEventListener('input', () => {
       clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(applyFilters, 200);
+      clearTimeout(remoteDebounceTimer);
+      debounceTimer = setTimeout(() => {
+        applyFilters();
+        updateSearchInputUX();
+      }, 200);
+      // Remote search runs on a longer debounce
+      const q = searchInput.value.trim();
+      if (q.length >= 2 && isRemoteSearchOn()) {
+        remoteDebounceTimer = setTimeout(() => runRemoteSearch(q), 500);
+      } else {
+        hideRemoteDropdown();
+      }
     });
 
     filterProject.addEventListener('change', applyFilters);
@@ -613,6 +865,7 @@
       currentPage = 1;
       renderTasks();
       updateCopyButtonState();
+      updateSearchInputUX();
       saveViewState();
     }
 
@@ -751,6 +1004,7 @@
 
     function clearFilters() {
       searchInput.value = '';
+      hideRemoteDropdown();
       filterProject.value = '';
       filterStatus.value = '';
       filterDue.value = '';
@@ -816,6 +1070,7 @@
             <div class="task-title"><a href="${p.url}" target="_blank">${titleText}</a></div>
             <div class="task-actions">
               <button class="sync-task-btn" data-id="${p.id}" title="Refresh this task">${icons.sync}</button>
+              ${p.number && p.title ? `<button class="copy-btn" data-number="${p.number}" data-title="${escapeHtml(p.title)}" data-url="${escapeHtml(p.url)}" title="Copy as markdown">${icons.copy}</button>` : ''}
             </div>
           </div>
           <div class="task-meta">
@@ -839,13 +1094,14 @@
       const isNew = changedTaskIds.has(String(task.id));
       const newClass = isNew ? ' task-card-new' : '';
       const subClass = isSubtask ? ' task-card-sub' : '';
+      const ghostClass = task._manual ? ' task-card-ghost' : '';
       const projUrl = projectUrl(task.url, task.projectId);
       const projLink = projUrl
         ? '<a href="' + projUrl + '" target="_blank" style="color: inherit; text-decoration: none;">' + escapeHtml(task.project) + '</a>'
         : escapeHtml(task.project);
 
       return `
-        <div class="task-card${newClass}${subClass}">
+        <div class="task-card${newClass}${subClass}${ghostClass}">
           <div class="task-header">
             <span class="ticket-key">
               <a href="/browse/${task.ticketKey}" title="Open in Productive">${task.ticketKey}</a>
@@ -855,6 +1111,7 @@
             </div>
             <div class="task-actions">
               <button class="sync-task-btn" data-id="${task.id}" title="Refresh this task">${icons.sync}</button>
+              ${task._manual ? `<button class="delete-task-btn" data-id="${task.id}" title="Remove from dashboard">${icons.trash}</button>` : ''}
               <button class="copy-btn" data-number="${task.ticketNumber}" data-title="${escapeHtml(task.title)}" data-url="${escapeHtml(task.url)}">${icons.copy}</button>
             </div>
           </div>
@@ -906,8 +1163,37 @@
       const syncBtn = e.target.closest('.sync-task-btn');
       if (syncBtn) {
         syncTask(syncBtn);
+        return;
+      }
+
+      const deleteBtn = e.target.closest('.delete-task-btn');
+      if (deleteBtn) {
+        deleteManualTask(deleteBtn);
       }
     });
+
+    async function deleteManualTask(btn) {
+      const taskId = btn.dataset.id;
+      if (!confirm('Remove this manually-added task from your dashboard?')) return;
+      btn.disabled = true;
+      try {
+        const res = await fetch('/api/delete-manual-task', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ taskId })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.success) throw new Error(data.error || 'Delete failed');
+
+        // Remove from local memory
+        const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+        if (idx !== -1) allTasks.splice(idx, 1);
+        applyFilters();
+      } catch (err) {
+        btn.disabled = false;
+        alert('Failed to remove: ' + err.message);
+      }
+    }
 
     async function syncTask(btn) {
       const taskId = btn.dataset.id;
@@ -1096,14 +1382,16 @@
     }
 
     async function copyAllAsMarkdown() {
-      if (filteredTasks.length === 0) {
+      // Manual ghosts are reference-only (not part of "my work today"), exclude from list copy
+      const copyableTasks = filteredTasks.filter(t => !t._manual);
+      if (copyableTasks.length === 0) {
         alert('No tasks to copy');
         return;
       }
 
       // Group tasks by project
       const grouped = {};
-      for (const task of filteredTasks) {
+      for (const task of copyableTasks) {
         if (!grouped[task.projectId]) {
           grouped[task.projectId] = {
             name: task.project,
@@ -1115,7 +1403,7 @@
       }
 
       // Build markdown output
-      const firstTaskUrl = filteredTasks[0] ? filteredTasks[0].url : '';
+      const firstTaskUrl = copyableTasks[0] ? copyableTasks[0].url : '';
       const urlParts = firstTaskUrl.split('app.productive.io/');
       const orgSlug = urlParts.length > 1 ? urlParts[1].split('/')[0] : '1476-dotcollective';
       

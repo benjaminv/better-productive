@@ -57,6 +57,11 @@ async function getConfig(env) {
   };
 }
 
+async function isRemoteSearchEnabled(env) {
+  const v = await env.TASKS_KV.get('config_remote_search_enabled');
+  return v === 'true';
+}
+
 // =============================================================================
 // Authentication Helpers
 // =============================================================================
@@ -345,6 +350,12 @@ export default {
           return handleSettings(request, env);
         case '/api/sync-task':
           return handleSyncTask(request, env);
+        case '/api/remote-search':
+          return handleRemoteSearch(url, env);
+        case '/api/add-manual-task':
+          return handleAddManualTask(request, env);
+        case '/api/delete-manual-task':
+          return handleDeleteManualTask(request, env);
         case '/update':
           return handleManualUpdate(request, env);
         default:
@@ -841,16 +852,34 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
     await fetchTasksWithFilter('assignee_id', personId, 'assigned');
   }
 
-  // Preserve tasks from previous sync that are no longer in API (mark as deleted)
+  // Preserve tasks from previous sync that are no longer in API
+  // - Manual ghosts (_manual: true) survive untouched (the user pinned them; full sync only fetches subscribed/assigned)
+  // - Other KV-only tasks get marked as Deleted
   for (const [taskId, existingTask] of existingTasksMap) {
     if (!taskMap.has(taskId)) {
-      // Task was in DB but not in API - mark as deleted but preserve original status
-      taskMap.set(taskId, {
-        ...existingTask,
-        status: existingTask._deleted ? existingTask.status : 'Deleted',
-        _deleted: true
-      });
-      allStatuses.add('Deleted');
+      if (existingTask._manual) {
+        // Manual ghost: keep as-is. Surface its project & status into the filter sets.
+        taskMap.set(taskId, existingTask);
+        if (existingTask.status) allStatuses.add(existingTask.status);
+        if (existingTask.projectId && !allProjects.has(existingTask.projectId)) {
+          allProjects.set(existingTask.projectId, { id: existingTask.projectId, name: existingTask.project });
+        }
+        if (existingTask.assigneeId && existingTask.assignee) {
+          allAssignees.set(existingTask.assigneeId, existingTask.assignee);
+        }
+      } else {
+        // Task was in DB but not in API - mark as deleted but preserve original status
+        taskMap.set(taskId, {
+          ...existingTask,
+          status: existingTask._deleted ? existingTask.status : 'Deleted',
+          _deleted: true
+        });
+        allStatuses.add('Deleted');
+      }
+    } else if (existingTask._manual) {
+      // Task was manual AND came back via subscribe/assign — promote to regular (drop _manual flag)
+      const fresh = taskMap.get(taskId);
+      taskMap.set(taskId, { ...fresh, _manual: false });
     }
   }
 
@@ -1165,7 +1194,7 @@ async function handleSettings(request, env) {
     const body = await request.json();
     const { action, value } = body;
     
-    if (!action || !value) {
+    if (!action || value === undefined || value === null) {
       return new Response(JSON.stringify({ error: 'Missing action or value' }), {
         status: 400,
         headers: corsHeaders()
@@ -1188,6 +1217,10 @@ async function handleSettings(request, env) {
         await env.TASKS_KV.put('config_app_pin', hashedPin);
         return new Response(JSON.stringify({ success: true }), { headers: corsHeaders() });
         
+      case 'remote_search_enabled':
+        await env.TASKS_KV.put('config_remote_search_enabled', value === true || value === 'true' ? 'true' : 'false');
+        return new Response(JSON.stringify({ success: true }), { headers: corsHeaders() });
+
       case 'token':
         // Validate token by making a test request
         const testResponse = await fetch('https://api.productive.io/api/v2/organizations', {
@@ -1362,13 +1395,16 @@ async function handleSyncTask(request, env) {
     if (alreadyInKV || isAssigned || isSubscribed) {
       // Task is ours (or was ours) — update/add in KV
       if (alreadyInKV) {
-        allTasks[idx] = updatedTask;
+        // Preserve the _manual flag UNLESS the user is now subscribed/assigned (auto-promote)
+        const wasManual = !!allTasks[idx]._manual;
+        const stillManual = wasManual && !isAssigned && !isSubscribed;
+        allTasks[idx] = stillManual ? { ...updatedTask, _manual: true } : updatedTask;
       } else {
         allTasks.unshift(updatedTask);
       }
       await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
 
-      return new Response(JSON.stringify({ success: true, task: updatedTask }), {
+      return new Response(JSON.stringify({ success: true, task: allTasks[idx !== -1 ? idx : 0] }), {
         headers: corsHeaders()
       });
     } else {
@@ -1405,6 +1441,335 @@ async function handleSyncTask(request, env) {
 
   } catch (error) {
     console.error('Sync task error:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500, headers: corsHeaders()
+    });
+  }
+}
+
+// =============================================================================
+// Remote Search (Productive.io fallback) + Manual Ghost Task
+// =============================================================================
+
+// Normalize a Productive.io task (data + included) into our task shape.
+// `prefix` may be undefined; caller resolves and stamps it.
+function normalizeProductiveTask(task, included, prefix, orgId, orgSlug) {
+  const peopleMap = {};
+  const projectMap = {};
+  const statusMap = {};
+  const includedTasks = {};
+
+  (included || []).forEach(item => {
+    if (item.type === 'people') peopleMap[item.id] = item.attributes.name || item.attributes.email || 'Unknown';
+    if (item.type === 'projects') projectMap[item.id] = item.attributes.name;
+    if (item.type === 'workflow_statuses') statusMap[item.id] = item.attributes.name;
+    if (item.type === 'tasks') {
+      includedTasks[item.id] = {
+        number: item.attributes.number,
+        title: item.attributes.title,
+        status: item.attributes.workflow_status_name || null,
+        dueDate: item.attributes.due_date,
+        createdAt: item.attributes.created_at,
+        updatedAt: item.attributes.updated_at
+      };
+    }
+  });
+
+  const assigneeId = task.relationships?.assignee?.data?.id;
+  const projectId = task.relationships?.project?.data?.id;
+  const statusId = task.relationships?.workflow_status?.data?.id;
+  const parentId = task.relationships?.parent_task?.data?.id || null;
+  const parentInc = parentId && includedTasks[parentId] ? includedTasks[parentId] : null;
+  const resolvedPrefix = prefix || 'UNKN';
+
+  return {
+    id: task.id,
+    ticketNumber: task.attributes.number,
+    title: task.attributes.title,
+    projectId: projectId,
+    project: projectMap[projectId] || 'No Project',
+    projectPrefix: resolvedPrefix,
+    ticketKey: `${resolvedPrefix}-${task.attributes.number}`,
+    status: statusMap[statusId] || task.attributes.workflow_status_name || 'Unknown',
+    assigneeId: assigneeId || null,
+    assignee: peopleMap[assigneeId] || 'Unassigned',
+    dueDate: task.attributes.due_date,
+    createdAt: task.attributes.created_at,
+    updatedAt: task.attributes.updated_at,
+    parent: parentId ? {
+      id: parentId,
+      number: parentInc?.number || null,
+      title: parentInc?.title || null,
+      status: parentInc?.status || null,
+      dueDate: parentInc?.dueDate || null,
+      createdAt: parentInc?.createdAt || null,
+      updatedAt: parentInc?.updatedAt || null
+    } : null,
+    url: `https://app.productive.io/${orgId}-${orgSlug}/tasks/task/${task.id}`,
+    _deleted: false
+  };
+}
+
+// Parse user query into a Productive.io filter strategy.
+function parseRemoteQuery(query, prefixIndex) {
+  const trimmed = query.trim();
+  if (!trimmed) return null;
+
+  // Ticket key: PRIM-242
+  const keyMatch = trimmed.match(/^([A-Za-z]{2,8})-(\d+)$/);
+  if (keyMatch) {
+    const prefix = keyMatch[1].toUpperCase();
+    const number = keyMatch[2];
+    const projectId = prefixIndex[prefix];
+    if (projectId) {
+      return { mode: 'key', projectId, number, prefix };
+    }
+    // Unknown prefix → fall through to numeric search on the digits
+    return { mode: 'number', number };
+  }
+
+  // Bare number: 242 or #242
+  const numMatch = trimmed.match(/^#?(\d+)$/);
+  if (numMatch) {
+    return { mode: 'number', number: numMatch[1] };
+  }
+
+  // Text search
+  return { mode: 'text', text: trimmed };
+}
+
+async function handleRemoteSearch(url, env) {
+  if (!(await isRemoteSearchEnabled(env))) {
+    return new Response(JSON.stringify({ error: 'Remote search disabled' }), {
+      status: 403, headers: corsHeaders()
+    });
+  }
+
+  const query = (url.searchParams.get('q') || '').trim();
+  if (!query || query.length < 2) {
+    return new Response(JSON.stringify({ results: [], query }), { headers: corsHeaders() });
+  }
+
+  try {
+    const config = await getConfig(env);
+    if (!config.apiToken) {
+      return new Response(JSON.stringify({ error: 'API token not configured' }), {
+        status: 500, headers: corsHeaders()
+      });
+    }
+
+    const { orgId, orgSlug } = await getOrganizationInfo(env);
+    const [tasksJson, prefixIndexJson, prefixMapJson] = await Promise.all([
+      env.TASKS_KV.get('all_tasks'),
+      env.TASKS_KV.get('prefix_index'),
+      env.TASKS_KV.get('prefix_map')
+    ]);
+    const allTasks = tasksJson ? JSON.parse(tasksJson) : [];
+    const prefixIndex = JSON.parse(prefixIndexJson || '{}');
+    const prefixMap = JSON.parse(prefixMapJson || '{}');
+    const knownIds = new Set(allTasks.map(t => String(t.id)));
+
+    const parsed = parseRemoteQuery(query, prefixIndex);
+    if (!parsed) {
+      return new Response(JSON.stringify({ results: [], query }), { headers: corsHeaders() });
+    }
+
+    const baseUrl = 'https://api.productive.io/api/v2/tasks';
+    const headers = {
+      'X-Auth-Token': config.apiToken,
+      'Content-Type': 'application/vnd.api+json',
+      'X-Organization-Id': orgId
+    };
+
+    let apiUrl = `${baseUrl}?page[size]=10&include=assignee,project,workflow_status,parent_task&sort=-id`;
+    if (parsed.mode === 'key') {
+      apiUrl += `&filter[project_id]=${parsed.projectId}&filter[task_number]=${parsed.number}`;
+    } else if (parsed.mode === 'number') {
+      apiUrl += `&filter[task_number]=${parsed.number}`;
+    } else {
+      apiUrl += `&filter[query]=${encodeURIComponent(parsed.text)}`;
+    }
+
+    const response = await fetch(apiUrl, { headers });
+    if (!response.ok) {
+      const errorText = await response.text();
+      return new Response(JSON.stringify({ error: `API error ${response.status}: ${errorText}` }), {
+        status: response.status, headers: corsHeaders()
+      });
+    }
+
+    const data = await response.json();
+    const included = data.included || [];
+
+    const results = [];
+    for (const task of (data.data || [])) {
+      if (knownIds.has(String(task.id))) continue; // dedupe against KV
+      const projectId = task.relationships?.project?.data?.id;
+      const prefix = prefixMap[projectId]; // may be undefined for new projects
+      results.push(normalizeProductiveTask(task, included, prefix, orgId, orgSlug));
+      if (results.length >= 10) break;
+    }
+
+    return new Response(JSON.stringify({ results, query }), { headers: corsHeaders() });
+  } catch (error) {
+    console.error('Remote search error:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500, headers: corsHeaders()
+    });
+  }
+}
+
+async function handleAddManualTask(request, env) {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405, headers: corsHeaders()
+    });
+  }
+
+  if (!(await isRemoteSearchEnabled(env))) {
+    return new Response(JSON.stringify({ error: 'Remote search disabled' }), {
+      status: 403, headers: corsHeaders()
+    });
+  }
+
+  try {
+    const { taskId } = await request.json();
+    if (!taskId) {
+      return new Response(JSON.stringify({ error: 'Missing taskId' }), {
+        status: 400, headers: corsHeaders()
+      });
+    }
+
+    const config = await getConfig(env);
+    if (!config.apiToken) {
+      return new Response(JSON.stringify({ error: 'API token not configured' }), {
+        status: 500, headers: corsHeaders()
+      });
+    }
+
+    const { orgId, orgSlug } = await getOrganizationInfo(env);
+
+    const response = await fetch(
+      `https://api.productive.io/api/v2/tasks/${taskId}?include=assignee,project,workflow_status,parent_task`,
+      {
+        headers: {
+          'X-Auth-Token': config.apiToken,
+          'Content-Type': 'application/vnd.api+json',
+          'X-Organization-Id': orgId
+        }
+      }
+    );
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      return new Response(JSON.stringify({ error: `API error ${response.status}: ${errorText}` }), {
+        status: response.status, headers: corsHeaders()
+      });
+    }
+
+    const data = await response.json();
+    const task = data.data;
+    const projectId = task.relationships?.project?.data?.id;
+
+    // Load existing prefix map / index and known tasks
+    const [tasksJson, prefixMapJson, prefixIndexJson, projectsJson] = await Promise.all([
+      env.TASKS_KV.get('all_tasks'),
+      env.TASKS_KV.get('prefix_map'),
+      env.TASKS_KV.get('prefix_index'),
+      env.TASKS_KV.get('filter_projects')
+    ]);
+    const allTasks = tasksJson ? JSON.parse(tasksJson) : [];
+    const prefixMap = JSON.parse(prefixMapJson || '{}');
+    const prefixIndex = JSON.parse(prefixIndexJson || '{}');
+    const projectsList = JSON.parse(projectsJson || '[]');
+
+    // Resolve / generate prefix for this project (handle never-synced projects)
+    let prefix = prefixMap[projectId];
+    let prefixWasNew = false;
+    if (!prefix) {
+      // Find project name from included data
+      const projectIncluded = (data.included || []).find(i => i.type === 'projects' && i.id === projectId);
+      const projectName = projectIncluded?.attributes?.name || `Project ${projectId}`;
+      const existingPrefixes = new Set(Object.values(prefixMap));
+      prefix = generatePrefix(projectName, existingPrefixes);
+      prefixMap[projectId] = prefix;
+      prefixIndex[prefix] = projectId;
+      prefixWasNew = true;
+      // Also add to filter_projects so the dropdown picks it up
+      if (!projectsList.find(p => p.id === projectId)) {
+        projectsList.push({ id: projectId, name: projectName, prefix });
+        projectsList.sort((a, b) => a.name.localeCompare(b.name));
+      }
+    }
+
+    const normalized = normalizeProductiveTask(task, data.included, prefix, orgId, orgSlug);
+    normalized._manual = true;
+
+    // Dedupe: if already in KV, just update in place (don't double-add)
+    const existingIdx = allTasks.findIndex(t => String(t.id) === String(normalized.id));
+    if (existingIdx !== -1) {
+      // Preserve _manual flag if it was already manual; otherwise leave as-is (subscribed/assigned)
+      const wasManual = allTasks[existingIdx]._manual;
+      allTasks[existingIdx] = wasManual ? normalized : { ...normalized, _manual: false };
+    } else {
+      allTasks.unshift(normalized);
+    }
+
+    // Persist
+    await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
+    if (prefixWasNew) {
+      await env.TASKS_KV.put('prefix_map', JSON.stringify(prefixMap));
+      await env.TASKS_KV.put('prefix_index', JSON.stringify(prefixIndex));
+      await env.TASKS_KV.put('filter_projects', JSON.stringify(projectsList));
+    }
+    await env.TASKS_KV.put('task_count', String(allTasks.filter(t => !t._deleted).length));
+
+    return new Response(JSON.stringify({ success: true, task: normalized }), { headers: corsHeaders() });
+  } catch (error) {
+    console.error('Add manual task error:', error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500, headers: corsHeaders()
+    });
+  }
+}
+
+async function handleDeleteManualTask(request, env) {
+  if (request.method !== 'POST') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405, headers: corsHeaders()
+    });
+  }
+  try {
+    const { taskId } = await request.json();
+    if (!taskId) {
+      return new Response(JSON.stringify({ error: 'Missing taskId' }), {
+        status: 400, headers: corsHeaders()
+      });
+    }
+
+    const tasksJson = await env.TASKS_KV.get('all_tasks');
+    const allTasks = tasksJson ? JSON.parse(tasksJson) : [];
+    const idx = allTasks.findIndex(t => String(t.id) === String(taskId));
+
+    if (idx === -1) {
+      return new Response(JSON.stringify({ error: 'Task not found' }), {
+        status: 404, headers: corsHeaders()
+      });
+    }
+    if (!allTasks[idx]._manual) {
+      // Safety: only manual ghosts can be deleted from KV via this endpoint
+      return new Response(JSON.stringify({ error: 'Only manually-added tasks can be deleted here' }), {
+        status: 400, headers: corsHeaders()
+      });
+    }
+
+    allTasks.splice(idx, 1);
+    await env.TASKS_KV.put('all_tasks', JSON.stringify(allTasks));
+    await env.TASKS_KV.put('task_count', String(allTasks.filter(t => !t._deleted).length));
+
+    return new Response(JSON.stringify({ success: true }), { headers: corsHeaders() });
+  } catch (error) {
+    console.error('Delete manual task error:', error);
     return new Response(JSON.stringify({ error: error.message }), {
       status: 500, headers: corsHeaders()
     });
@@ -1483,13 +1848,15 @@ async function handleManualUpdate(request, env) {
 // =============================================================================
 
 async function renderSearchPage(env) {
-  const [lastUpdated, taskCount, assignedCount, config, pageTitle] = await Promise.all([
+  const [lastUpdated, taskCount, assignedCount, config, pageTitle, remoteSearchEnabled] = await Promise.all([
     env.TASKS_KV.get('last_updated'),
     env.TASKS_KV.get('task_count'),
     env.TASKS_KV.get('assigned_count'),
     getConfig(env),
-    env.TASKS_KV.get('config_page_title')
+    env.TASKS_KV.get('config_page_title'),
+    env.TASKS_KV.get('config_remote_search_enabled')
   ]);
+  const remoteSearchOn = remoteSearchEnabled === 'true';
 
   const lastUpdatedDisplay = lastUpdated
     ? new Date(lastUpdated).toLocaleString('en-AU', { timeZone: 'Australia/Sydney' })
@@ -1509,7 +1876,7 @@ async function renderSearchPage(env) {
     ? `<div class="form-group">
         <label>PIN</label>
         <p class="hint" style="margin-top: 0;">Managed via environment variable. To update:</p>
-        <code class="hint" style="display: block; background: var(--bg-card); padding: 0.5rem; border-radius: 6px; margin-top: 0.25rem; font-size: 0.75rem;">wrangler secret put APP_PIN</code>
+        <code class="cli-snippet">wrangler secret put APP_PIN</code>
         <p class="hint">Or update in Cloudflare Dashboard → Workers → Settings → Variables</p>
       </div>`
     : `<div class="form-group">
@@ -1526,7 +1893,7 @@ async function renderSearchPage(env) {
     ? `<div class="form-group">
         <label>API Token</label>
         <p class="hint" style="margin-top: 0;">Managed via environment variable. To update:</p>
-        <code class="hint" style="display: block; background: var(--bg-card); padding: 0.5rem; border-radius: 6px; margin-top: 0.25rem; font-size: 0.75rem;">wrangler secret put PRODUCTIVE_API_TOKEN</code>
+        <code class="cli-snippet">wrangler secret put PRODUCTIVE_API_TOKEN</code>
         <p class="hint">Or update in Cloudflare Dashboard → Workers → Settings → Variables</p>
       </div>`
     : `<div class="form-group">
@@ -1554,5 +1921,7 @@ async function renderSearchPage(env) {
     .replace(/\{\{LAST_UPDATED\}\}/g, lastUpdatedDisplay)
     .replace(/\{\{PIN_SECTION\}\}/g, pinSection)
     .replace(/\{\{TOKEN_SECTION\}\}/g, tokenSection)
-    .replace(/\{\{LOGOUT_SECTION\}\}/g, logoutSection);
+    .replace(/\{\{LOGOUT_SECTION\}\}/g, logoutSection)
+    .replace(/\{\{REMOTE_SEARCH_ENABLED\}\}/g, remoteSearchOn ? 'true' : 'false')
+    .replace(/\{\{REMOTE_SEARCH_CHECKED\}\}/g, remoteSearchOn ? 'checked' : '');
 }

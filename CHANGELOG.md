@@ -2,6 +2,44 @@
 
 All notable changes to Better Productive will be documented in this file.
 
+## [0.9.0] - 2026-04-14
+
+### Added
+- **Remote search & manual ghosts** — Look up tickets you're not subscribed/assigned to directly from the search input
+  - As you type, a transparent dropdown surfaces matches found on Productive.io that aren't yet in your KV
+  - Supports ticket-key (`PRIM-242`), bare number (`#242`), and free-text queries
+  - `+ Add` pins a remote ticket as a "manual ghost" with the same dashed-border styling as derived ghost parents
+  - Manual ghosts persist across full syncs (tracked via `_manual: true`); auto-promoted to regular tasks if you later get subscribed/assigned
+  - New projects pulled in via manual add automatically get a generated, collision-safe prefix
+  - Off by default — enable in Settings → Features
+- **Search input UX**
+  - Inline count swaps from `1027 tasks (34 assigned)` to `N results` while a query is active
+  - ✕ clear button at the far right of the input
+  - Two-stage `Esc`: first dismisses the remote dropdown, second clears the input
+
+## [0.8.3] - 2026-03-25
+
+### Added
+- **View state persistence** — All filter and sort selections (project, status, due, custom date, exact-date toggle, my tasks, exclude resolved, sort) persist across page loads via `localStorage`
+- Clear button removes the persisted state for a true reset
+
+## [0.8.2] - 2026-03-25
+
+### Changed
+- "Today" Due filter now covers overdue + today (was exact today only) so you don't miss overdues
+
+### Fixed
+- iOS empty-box datepicker — Custom Date now prefills today
+- Timezone bug where `toISOString()` showed previous day in AEDT — switched to explicit local `YYYY-MM-DD` formatting
+
+## [0.8.0] - 2026-03-XX
+
+### Added
+- **Project-grouped view** with parent/subtask hierarchy (Project A-Z sort)
+- **Ghost parent cards** — unsubscribed parent tasks render with dashed border, derived from API included data
+- Clickable project links in task cards
+- Smart single-task sync — ghost parents update children without polluting KV
+
 ## [0.7.0] - 2026-02-24
 
 ### Added

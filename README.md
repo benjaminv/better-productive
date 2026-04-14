@@ -227,6 +227,9 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Ghost parent cards for unsubscribed parent tasks (dashed border, derived from API included data)
 - [x] Clickable project links in task cards
 - [x] Smart single-task sync (ghost parents update children without polluting KV)
+- [x] Remote search fallback to Productive.io for tickets outside your subscriptions (opt-in)
+- [x] Pin remote tickets as persistent manual ghost tasks (survive full syncs, auto-promote when you get subscribed)
+- [x] Inline search input UX: live result count, ✕ clear button, two-stage Esc
 
 ### Planned
 - [ ] Keep current filter view with URL query parameter(s)

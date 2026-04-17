@@ -730,6 +730,9 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
   let allProjects = new Map();
   let allStatuses = new Set();
   let allAssignees = new Map();
+  let allTaskLists = new Map();  // taskListId -> {name, boardId}
+  let allBoardIds = new Set();   // board IDs (tracked for filter)
+  let allBoardNames = {};        // boardId -> name (from included boards)
   
   // Track total pages fetched for progress
   let totalPagesFetched = 0;
@@ -742,7 +745,7 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
     while (hasMore && page <= 25) {  // 25 pages per filter type = 50 total max
       if (abortSignal?.aborted) throw new DOMException('Sync cancelled', 'AbortError');
       const url = `${baseUrl}?page[number]=${page}&page[size]=200` +
-        `&include=assignee,project,workflow_status,parent_task` +
+        `&include=assignee,project,workflow_status,parent_task,task_list.board` +
         `&filter[${filterParam}]=${filterValue}` +
         `&sort=-id`;             // Fetch newest tasks first
 
@@ -786,6 +789,17 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
             updatedAt: item.attributes.updated_at
           };
         }
+        if (item.type === 'task_lists') {
+          const boardRel = item.relationships?.board?.data;
+          allTaskLists.set(item.id, {
+            name: item.attributes.name,
+            boardId: boardRel?.id || null
+          });
+          if (boardRel?.id) allBoardIds.add(boardRel.id);
+        }
+        if (item.type === 'boards') {
+          allBoardNames[item.id] = item.attributes.name;
+        }
       });
 
       // Process tasks
@@ -801,6 +815,8 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
         allStatuses.add(status);
 
         const parentInc = parentId && includedTasks[parentId] ? includedTasks[parentId] : null;
+        const taskListId = task.relationships?.task_list?.data?.id || null;
+        const taskListInfo = taskListId ? allTaskLists.get(taskListId) : null;
 
         taskMap.set(task.id, {
           id: task.id,
@@ -814,6 +830,10 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
           dueDate: task.attributes.due_date,
           createdAt: task.attributes.created_at,
           updatedAt: task.attributes.updated_at,
+          taskListId: taskListId,
+          taskListName: taskListInfo?.name || null,
+          boardId: taskListInfo?.boardId || null,
+          boardName: null,
           parent: parentId ? {
             id: parentId,
             number: parentInc?.number || null,
@@ -850,6 +870,13 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
   if (personId) {
     await fetchTasksWithFilter('subscriber_id', personId, 'subscribed');
     await fetchTasksWithFilter('assignee_id', personId, 'assigned');
+  }
+
+  // Stamp board names onto tasks (from included board data via task_list.board)
+  for (const [, task] of taskMap) {
+    if (task.boardId && allBoardNames[task.boardId]) {
+      task.boardName = allBoardNames[task.boardId];
+    }
   }
 
   // Preserve tasks from previous sync that are no longer in API
@@ -980,7 +1007,18 @@ async function updateTaskDatabase(env, onProgress = null, sendEvent = null, isMa
     prefix: prefixMap[p.id] || 'UNKN'
   })).sort((a, b) => a.name.localeCompare(b.name));
   await env.TASKS_KV.put('filter_projects', JSON.stringify(projectsWithNames));
-  
+
+  // Store boards for filter/grouping
+  const allBoardsMap = new Map();
+  for (const task of allTasks) {
+    if (task.boardId && task.boardName && !allBoardsMap.has(task.boardId)) {
+      allBoardsMap.set(task.boardId, { id: task.boardId, name: task.boardName });
+    }
+  }
+  await env.TASKS_KV.put('filter_boards', JSON.stringify(
+    [...allBoardsMap.values()].sort((a, b) => a.name.localeCompare(b.name))
+  ));
+
   // Store current user's person ID for "assigned to me" filter
   await env.TASKS_KV.put('current_person_id', personId);
 
@@ -1165,12 +1203,13 @@ async function handlePrefixes(env) {
 }
 
 async function handleFilters(env) {
-  const [projectsJson, statusesJson, assigneesJson, currentPersonId, changedIdsJson] = await Promise.all([
+  const [projectsJson, statusesJson, assigneesJson, currentPersonId, changedIdsJson, boardsJson] = await Promise.all([
     env.TASKS_KV.get('filter_projects'),
     env.TASKS_KV.get('filter_statuses'),
     env.TASKS_KV.get('filter_assignees'),
     env.TASKS_KV.get('current_person_id'),
-    env.TASKS_KV.get('changed_task_ids')
+    env.TASKS_KV.get('changed_task_ids'),
+    env.TASKS_KV.get('filter_boards')
   ]);
 
   return new Response(JSON.stringify({
@@ -1178,7 +1217,8 @@ async function handleFilters(env) {
     statuses: JSON.parse(statusesJson || '[]'),
     assignees: JSON.parse(assigneesJson || '[]'),
     currentPersonId: currentPersonId || null,
-    changedTaskIds: JSON.parse(changedIdsJson || '[]')
+    changedTaskIds: JSON.parse(changedIdsJson || '[]'),
+    boards: JSON.parse(boardsJson || '[]')
   }), { headers: corsHeaders() });
 }
 
@@ -1284,7 +1324,7 @@ async function handleSyncTask(request, env) {
 
     // Fetch single task from Productive.io
     const response = await fetch(
-      `https://api.productive.io/api/v2/tasks/${taskId}?include=assignee,project,workflow_status,parent_task`,
+      `https://api.productive.io/api/v2/tasks/${taskId}?include=assignee,project,workflow_status,parent_task,task_list.board`,
       {
         headers: {
           'X-Auth-Token': apiToken,
@@ -1326,6 +1366,8 @@ async function handleSyncTask(request, env) {
     const statusMap = {};
 
     let parentInc = null;
+    let taskListInfo = null;
+    let syncBoardName = null;
 
     (data.included || []).forEach(item => {
       if (item.type === 'people') peopleMap[item.id] = item.attributes.name || item.attributes.email || 'Unknown';
@@ -1341,12 +1383,24 @@ async function handleSyncTask(request, env) {
           updatedAt: item.attributes.updated_at
         };
       }
+      if (item.type === 'task_lists') {
+        const boardRel = item.relationships?.board?.data;
+        taskListInfo = {
+          id: item.id,
+          name: item.attributes.name,
+          boardId: boardRel?.id || null
+        };
+      }
+      if (item.type === 'boards') {
+        syncBoardName = item.attributes.name;
+      }
     });
 
     const assigneeId = task.relationships?.assignee?.data?.id;
     const projectId = task.relationships?.project?.data?.id;
     const statusId = task.relationships?.workflow_status?.data?.id;
     const parentId = task.relationships?.parent_task?.data?.id || null;
+    const taskListId = task.relationships?.task_list?.data?.id || null;
 
     // Load prefix map for ticket key generation
     const prefixMapJson = await env.TASKS_KV.get('prefix_map');
@@ -1367,6 +1421,10 @@ async function handleSyncTask(request, env) {
       dueDate: task.attributes.due_date,
       createdAt: task.attributes.created_at,
       updatedAt: task.attributes.updated_at,
+      taskListId: taskListId,
+      taskListName: taskListInfo?.name || null,
+      boardId: taskListInfo?.boardId || null,
+      boardName: syncBoardName || null,
       parent: parentId ? {
         id: parentId,
         number: parentInc?.number || null,
@@ -1395,6 +1453,11 @@ async function handleSyncTask(request, env) {
     if (alreadyInKV || isAssigned || isSubscribed) {
       // Task is ours (or was ours) — update/add in KV
       if (alreadyInKV) {
+        // Preserve board name from existing task (single-task sync can't batch-fetch boards)
+        const existing = allTasks[idx];
+        if (!updatedTask.boardName && existing.boardName && existing.boardId === updatedTask.boardId) {
+          updatedTask.boardName = existing.boardName;
+        }
         // Preserve the _manual flag UNLESS the user is now subscribed/assigned (auto-promote)
         const wasManual = !!allTasks[idx]._manual;
         const stillManual = wasManual && !isAssigned && !isSubscribed;
@@ -1458,6 +1521,8 @@ function normalizeProductiveTask(task, included, prefix, orgId, orgSlug) {
   const projectMap = {};
   const statusMap = {};
   const includedTasks = {};
+  const taskListMap = {};
+  const boardMap = {};
 
   (included || []).forEach(item => {
     if (item.type === 'people') peopleMap[item.id] = item.attributes.name || item.attributes.email || 'Unknown';
@@ -1473,6 +1538,16 @@ function normalizeProductiveTask(task, included, prefix, orgId, orgSlug) {
         updatedAt: item.attributes.updated_at
       };
     }
+    if (item.type === 'task_lists') {
+      const boardRel = item.relationships?.board?.data;
+      taskListMap[item.id] = {
+        name: item.attributes.name,
+        boardId: boardRel?.id || null
+      };
+    }
+    if (item.type === 'boards') {
+      boardMap[item.id] = item.attributes.name;
+    }
   });
 
   const assigneeId = task.relationships?.assignee?.data?.id;
@@ -1480,6 +1555,8 @@ function normalizeProductiveTask(task, included, prefix, orgId, orgSlug) {
   const statusId = task.relationships?.workflow_status?.data?.id;
   const parentId = task.relationships?.parent_task?.data?.id || null;
   const parentInc = parentId && includedTasks[parentId] ? includedTasks[parentId] : null;
+  const taskListId = task.relationships?.task_list?.data?.id || null;
+  const taskListInfo = taskListId ? taskListMap[taskListId] : null;
   const resolvedPrefix = prefix || 'UNKN';
 
   return {
@@ -1496,6 +1573,10 @@ function normalizeProductiveTask(task, included, prefix, orgId, orgSlug) {
     dueDate: task.attributes.due_date,
     createdAt: task.attributes.created_at,
     updatedAt: task.attributes.updated_at,
+    taskListId: taskListId,
+    taskListName: taskListInfo?.name || null,
+    boardId: taskListInfo?.boardId || null,
+    boardName: (taskListInfo?.boardId && boardMap[taskListInfo.boardId]) || null,
     parent: parentId ? {
       id: parentId,
       number: parentInc?.number || null,
@@ -1581,7 +1662,7 @@ async function handleRemoteSearch(url, env) {
       'X-Organization-Id': orgId
     };
 
-    let apiUrl = `${baseUrl}?page[size]=10&include=assignee,project,workflow_status,parent_task&sort=-id`;
+    let apiUrl = `${baseUrl}?page[size]=10&include=assignee,project,workflow_status,parent_task,task_list.board&sort=-id`;
     if (parsed.mode === 'key') {
       apiUrl += `&filter[project_id]=${parsed.projectId}&filter[task_number]=${parsed.number}`;
     } else if (parsed.mode === 'number') {
@@ -1650,7 +1731,7 @@ async function handleAddManualTask(request, env) {
     const { orgId, orgSlug } = await getOrganizationInfo(env);
 
     const response = await fetch(
-      `https://api.productive.io/api/v2/tasks/${taskId}?include=assignee,project,workflow_status,parent_task`,
+      `https://api.productive.io/api/v2/tasks/${taskId}?include=assignee,project,workflow_status,parent_task,task_list.board`,
       {
         headers: {
           'X-Auth-Token': config.apiToken,

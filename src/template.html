@@ -177,7 +177,8 @@
         <span class="filter-label">Sort:</span>
         <select class="filter-select" id="sortSelect">
           <option value="default">Default</option>
-          <option value="project-asc">Project (A-Z)</option>
+          <option value="project-asc">Project</option>
+          <option value="board">Board</option>
           <option value="due-asc">Due Date (A-Z)</option>
           <option value="created-desc">Created (Z-A)</option>
           <option value="updated-desc">Updated (Z-A)</option>
@@ -211,6 +212,7 @@
       chevronsUpDown: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>',
       chevronsDownUp: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 4 5 5 5-5"/><path d="m7 20 5-5 5 5"/></svg>',
       trash: '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/></svg>',
+      board: '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="9" x="3" y="3" rx="1"/><rect width="7" height="5" x="14" y="3" rx="1"/><rect width="7" height="9" x="14" y="12" rx="1"/><rect width="7" height="5" x="3" y="16" rx="1"/></svg>',
     };
 
     // Theme toggle
@@ -780,7 +782,7 @@
       filteredTasks = allTasks.filter(task => {
         // Text search
         if (query) {
-          const searchText = (task.ticketKey + ' ' + task.title + ' ' + task.status + ' ' + task.assignee + ' ' + task.project).toLowerCase();
+          const searchText = (task.ticketKey + ' ' + task.title + ' ' + task.status + ' ' + task.assignee + ' ' + task.project + ' ' + (task.taskListName || '') + ' ' + (task.boardName || '')).toLowerCase();
           if (!searchText.includes(query)) return false;
         }
         
@@ -841,6 +843,10 @@
           switch (sortValue) {
             case 'project-asc':
               return (a.project || '').localeCompare(b.project || '');
+            case 'board':
+              return (a.boardName || '\uffff').localeCompare(b.boardName || '\uffff') ||
+                (a.taskListName || '\uffff').localeCompare(b.taskListName || '\uffff') ||
+                b.id - a.id;
             case 'due-asc':
               // Tasks with no due date go to the end
               if (!a.dueDate && !b.dueDate) return 0;
@@ -903,6 +909,8 @@
       let tasksHtml;
       if (sortSelect.value === 'project-asc') {
         tasksHtml = renderGroupedTasks(pageTasks);
+      } else if (sortSelect.value === 'board') {
+        tasksHtml = renderBoardGroupedTasks(pageTasks);
       } else {
         tasksHtml = pageTasks.map(t => renderTask(t)).join('');
       }
@@ -919,7 +927,7 @@
       const groupMap = {};
       for (const task of tasks) {
         if (!groupMap[task.projectId]) {
-          groupMap[task.projectId] = { name: task.project, tasks: [] };
+          groupMap[task.projectId] = { projectId: task.projectId, url: task.url, name: task.project, tasks: [] };
           groups.push(groupMap[task.projectId]);
         }
         groupMap[task.projectId].tasks.push(task);
@@ -929,8 +937,13 @@
       let groupIdx = 0;
       for (const group of groups) {
         const gid = 'pg-' + groupIdx++;
+        const projHref = projectUrl(group.url, group.projectId);
+        const projLinkHtml = projHref
+          ? '<a href="' + projHref + '" target="_blank" onclick="event.stopPropagation()">' + escapeHtml(group.name) + '</a>'
+          : escapeHtml(group.name);
         html += '<div class="project-group-header" onclick="toggleProjectGroup(\'' + gid + '\')">' +
-          icons.folder + ' ' + escapeHtml(group.name) +
+          icons.folder + ' ' + projLinkHtml +
+          ' <span class="group-count">' + group.tasks.length + '</span>' +
           '<span class="chevron" id="' + gid + '-icon">' + icons.chevronsDownUp + '</span>' +
         '</div>';
         html += '<div class="project-group-content" id="' + gid + '">';
@@ -993,6 +1006,149 @@
       return html;
     }
 
+    function renderBoardGroupedTasks(tasks) {
+      const allTaskIds = new Set(allTasks.map(t => String(t.id)));
+
+      // Group by board, then by task list, preserving order of first appearance
+      const boardGroups = [];
+      const boardMap = {};
+      const ungrouped = [];
+
+      for (const task of tasks) {
+        if (!task.boardId) {
+          ungrouped.push(task);
+          continue;
+        }
+        const key = task.boardId;
+        if (!boardMap[key]) {
+          boardMap[key] = {
+            boardId: task.boardId,
+            boardName: task.boardName || 'Board',
+            projectName: task.project,
+            projectId: task.projectId,
+            url: task.url,
+            taskLists: {},
+            taskListOrder: []
+          };
+          boardGroups.push(boardMap[key]);
+        }
+        const listKey = task.taskListId || '_none';
+        if (!boardMap[key].taskLists[listKey]) {
+          boardMap[key].taskLists[listKey] = {
+            name: task.taskListName || 'Tasks',
+            tasks: []
+          };
+          boardMap[key].taskListOrder.push(listKey);
+        }
+        boardMap[key].taskLists[listKey].tasks.push(task);
+      }
+
+      let html = '';
+      let groupIdx = 0;
+
+      for (const board of boardGroups) {
+        const gid = 'bg-' + groupIdx++;
+        const bUrl = boardUrl({ boardId: board.boardId, projectId: board.projectId, url: board.url });
+        const linkHtml = bUrl
+          ? '<a href="' + bUrl + '" target="_blank" onclick="event.stopPropagation()">' + escapeHtml(board.boardName) + '</a>'
+          : escapeHtml(board.boardName);
+
+        const boardTaskCount = board.taskListOrder.reduce((sum, k) => sum + board.taskLists[k].tasks.length, 0);
+        // When board has one task list, show its name (includes #N prefix) instead of the board name
+        const singleListName = board.taskListOrder.length === 1
+          ? escapeHtml(board.taskLists[board.taskListOrder[0]].name)
+          : null;
+        const headingLabel = singleListName
+          ? (bUrl ? '<a href="' + bUrl + '" target="_blank" onclick="event.stopPropagation()">' + singleListName + '</a>' : singleListName)
+          : linkHtml;
+        html += '<div class="board-group-header" onclick="toggleProjectGroup(\'' + gid + '\')">' +
+          icons.board + ' ' + headingLabel +
+          ' <span class="group-count">' + boardTaskCount + '</span>' +
+          ' <span style="font-size: 0.7rem; opacity: 0.5;">(' + escapeHtml(board.projectName) + ')</span>' +
+          '<span class="chevron" id="' + gid + '-icon">' + icons.chevronsDownUp + '</span>' +
+        '</div>';
+        html += '<div class="project-group-content" id="' + gid + '">';
+
+        for (const listKey of board.taskListOrder) {
+          const list = board.taskLists[listKey];
+          // Show task list sub-header when board has multiple lists
+          if (board.taskListOrder.length > 1 && listKey !== '_none') {
+            html += '<div class="task-list-sub-header">' + escapeHtml(list.name) + ' <span class="group-count">' + list.tasks.length + '</span></div>';
+          }
+
+          const pageIds = new Set(list.tasks.map(t => String(t.id)));
+          const topLevel = [];
+          const childrenOf = {};
+          const ghostChildren = {};
+
+          for (const task of list.tasks) {
+            const pid = task.parent?.id ? String(task.parent.id) : null;
+            if (pid && pageIds.has(pid)) {
+              if (!childrenOf[pid]) childrenOf[pid] = [];
+              childrenOf[pid].push(task);
+            } else if (pid && !allTaskIds.has(pid)) {
+              if (!ghostChildren[pid]) ghostChildren[pid] = [];
+              ghostChildren[pid].push(task);
+            } else {
+              topLevel.push(task);
+            }
+          }
+
+          // Ghost parents
+          for (const [parentId, children] of Object.entries(ghostChildren)) {
+            const ref = children[0];
+            const parentUrl = ref.url.replace(/\/task\/[^/]+$/, '/task/' + parentId);
+            html += renderGhostParent({
+              id: parentId,
+              number: ref.parent?.number,
+              title: ref.parent?.title,
+              status: ref.parent?.status,
+              assignee: ref.parent?.assignee,
+              dueDate: ref.parent?.dueDate,
+              createdAt: ref.parent?.createdAt,
+              updatedAt: ref.parent?.updatedAt,
+              project: board.projectName,
+              projectId: ref.projectId,
+              projectPrefix: ref.projectPrefix,
+              url: parentUrl
+            });
+            for (const child of children) {
+              html += renderTask(child, true);
+            }
+          }
+
+          // Top-level tasks with their children
+          for (const task of topLevel) {
+            html += renderTask(task);
+            if (childrenOf[task.id]) {
+              for (const child of childrenOf[task.id]) {
+                html += renderTask(child, true);
+              }
+            }
+          }
+        }
+
+        html += '</div>';
+      }
+
+      // Ungrouped tasks (no board)
+      if (ungrouped.length > 0) {
+        const gid = 'bg-ungrouped';
+        html += '<div class="board-group-header" onclick="toggleProjectGroup(\'' + gid + '\')">' +
+          icons.folder + ' No Board' +
+          ' <span class="group-count">' + ungrouped.length + '</span>' +
+          '<span class="chevron" id="' + gid + '-icon">' + icons.chevronsDownUp + '</span>' +
+        '</div>';
+        html += '<div class="project-group-content" id="' + gid + '">';
+        for (const task of ungrouped) {
+          html += renderTask(task);
+        }
+        html += '</div>';
+      }
+
+      return html;
+    }
+
     function toggleProjectGroup(gid) {
       const content = document.getElementById(gid);
       const icon = document.getElementById(gid + '-icon');
@@ -1049,6 +1205,13 @@
       const parts = taskUrl.split('app.productive.io/');
       const orgSlug = parts.length > 1 ? parts[1].split('/')[0] : '';
       return orgSlug ? 'https://app.productive.io/' + orgSlug + '/projects/' + projectId : '';
+    }
+
+    function boardUrl(task) {
+      if (!task.boardId || !task.projectId) return '';
+      const parts = (task.url || '').split('app.productive.io/');
+      const orgSlug = parts.length > 1 ? parts[1].split('/')[0] : '';
+      return orgSlug ? 'https://app.productive.io/' + orgSlug + '/projects/' + task.projectId + '/tasks?board=' + task.boardId : '';
     }
 
     function renderGhostParent(p) {
@@ -1120,6 +1283,7 @@
             <span class="status-badge ${statusClass}">${escapeHtml(task.status)}</span>
             <span>${icons.person} ${escapeHtml(task.assignee)}</span>
             <span>${icons.folder} ${projLink}</span>
+            ${task.boardId ? '<span>' + icons.board + ' <a href="' + boardUrl(task) + '" target="_blank" class="remote-search-link">' + escapeHtml(task.taskListName || 'Board') + '</a></span>' : ''}
             ${task.dueDate ? '<span>' + icons.calendar + ' ' + task.dueDate + '</span>' : ''}
           </div>
           <div class="task-dates">

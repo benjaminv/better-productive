@@ -230,6 +230,10 @@ MIT License - see [LICENSE](LICENSE) for details.
 - [x] Remote search fallback to Productive.io for tickets outside your subscriptions (opt-in)
 - [x] Pin remote tickets as persistent manual ghost tasks (survive full syncs, auto-promote when you get subscribed)
 - [x] Inline search input UX: live result count, ✕ clear button, two-stage Esc
+- [x] Board awareness — task list and board metadata fetched via nested include, board badge on cards linking to board view
+- [x] Board-grouped view with collapsible headers, task list sub-headers, and parent/child nesting
+- [x] Linked group headers — project and board headers link to their Productive pages
+- [x] Task count badges on all group headers
 
 ### Planned
 - [ ] Keep current filter view with URL query parameter(s)

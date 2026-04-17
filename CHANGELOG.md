@@ -2,6 +2,32 @@
 
 All notable changes to Better Productive will be documented in this file.
 
+## [0.10.0] - 2026-04-17
+
+### Added
+- **Board awareness** — Tasks now carry task list and board metadata from Productive.io (fetched via `task_list.board` nested include, zero extra API calls)
+- **Board badge on task cards** — Each card shows its task list name (e.g. `#3 Definition`) with a Lucide `layout-dashboard` icon, linking directly to the board view on Productive
+- **"Board" sort option** — Groups tasks by board with collapsible headers, task list sub-headers (when a board has multiple lists), and full parent/child + ghost parent nesting
+- **Task count badges** — Board, task list, and project group headers all show a pill count of contained tasks
+- **Linked group headers** — Both project and board group headers are now clickable links to their Productive pages, with text selection enabled
+- Board and task list names included in search
+
+### Changed
+- Sort option renamed from "Project (A-Z)" to "Project"
+
+### Fixed
+- Corrected `task_list.board.board` double-path typo in full sync include param
+- Board header link clicks no longer also toggle collapse (`event.stopPropagation`)
+- Stable sort within board groups (ID desc tie-breaker)
+
+## [0.9.1] - 2026-04-14
+
+### Fixed
+- Dropdown layout: switched from CSS grid to flex column for mobile wrapping
+- Mobile search count: inline result count shows inside search input
+- Dropdown links: ticket key + title link to Productive task, project links to project page
+- Action buttons standardised to 28x28; settings modal checkbox label cascade fix
+
 ## [0.9.0] - 2026-04-14
 
 ### Added
